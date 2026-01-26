@@ -181,7 +181,7 @@ class GameRoom {
 
         let winner = null;
         for(let pId in this.players) {
-            if(this.players[pId].score >= 5) winner = this.players[pId];
+            if(this.players[pId].score >= 50) winner = this.players[pId];
         }
 
         this.broadcast('gameState', { state: 'SCORE', players: this.players, winner: winner });
@@ -276,5 +276,6 @@ class GameRoom {
         }
     }
 }
+
 
 module.exports = GameRoom;
