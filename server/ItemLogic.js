@@ -1,55 +1,52 @@
 // server/ItemLogic.js
 
-/**
- * Ce module gère les effets CÔTÉ SERVEUR des items.
- * Par exemple : détruire le décor, changer le score, téléporter, etc.
- */
-
 const ItemLogic = {
-    // ID 7 = Bombe
+    // ID 7 : BOMBE CLASSIQUE (Casse les blocs uniquement)
     7: (room, itemInstance) => {
-        // La logique qu'on avait dans server.js, maintenant isolée ici
-        console.log(`[ItemLogic] Explosion de bombe en ${itemInstance.x}, ${itemInstance.y}`);
-        
-        const explosionRadius = 50; 
+        const explosionRadius = 60; // Rayon mortel (en pixels)
 
-        // 1. Supprimer la bombe elle-même
-        // On cherche l'index actuel car il a pu changer
+        // 1. Supprimer la bombe de la liste
         const index = room.mapData.findIndex(i => i.id === itemInstance.id);
         if (index !== -1) room.mapData.splice(index, 1);
 
-        // 2. Détruire les blocs destructibles autour
-        const initialCount = room.mapData.length;
-        
+        // 2. Détruire les blocs destructibles (Côté Serveur)
         room.mapData = room.mapData.filter(target => {
             const dx = target.x - itemInstance.x;
             const dy = target.y - itemInstance.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
 
-            if (dist < explosionRadius) {
-                // Si indestructible (éditeur), on garde (return true)
-                // Sinon on supprime (return false)
-                return target.isDestructible === false;
+            if (dist < explosionRadius && target.isDestructible !== false) {
+                return false; 
             }
             return true;
         });
 
-        // 3. Notifier les joueurs si la map a changé
-        if (room.mapData.length !== initialCount || index !== -1) {
-             room.broadcast('gameState', { 
-                state: room.state, 
-                map: room.mapData 
-                // On n'est pas obligé de renvoyer 'players' si seuls les blocs changent
-            });
-            
-            // Optionnel : Envoyer un événement pour l'effet visuel
-            room.broadcast('explosionEffect', { x: itemInstance.x, y: itemInstance.y });
-        }
+        // 3. Mettre à jour la map
+        room.broadcast('gameState', { state: room.state, map: room.mapData });
+        
+        // 4. SIGNAL EXPLOSION : On envoie la position ET le rayon
+        room.broadcast('explosionEffect', { 
+            x: itemInstance.x, 
+            y: itemInstance.y, 
+            radius: explosionRadius, // <-- Important pour tuer le joueur
+            type: 'classic' 
+        });
     },
 
-    // Tu pourras ajouter d'autres IDs ici facilement
-    // Exemple : 
-    // 8: (room, item) => { ... logique d'une potion ... }
+    // ID 10 : NUKE (Tue tout le monde + optionnellement casse la bombe elle-même)
+    10: (room, itemInstance) => {
+        console.log(`[ItemLogic] NUKE déclenchée par un joueur !`);
+
+        // 1. On supprime l'objet Nuke de la map (pour qu'elle ne ré-explose pas)
+        const index = room.mapData.findIndex(i => i.id === itemInstance.id);
+        if (index !== -1) room.mapData.splice(index, 1);
+        
+        // Mise à jour de la map (la nuke disparaît)
+        room.broadcast('gameState', { state: room.state, map: room.mapData });
+
+        // 2. SIGNAL MORTEL : On dit à tous les clients "Mourez !"
+        room.broadcast('nukeDetonated', { x: itemInstance.x, y: itemInstance.y });
+    }
 };
 
 module.exports = ItemLogic;

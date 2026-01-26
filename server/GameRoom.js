@@ -10,6 +10,12 @@ class GameRoom {
         this.code = code;
         this.hostId = hostId;
         this.config = config;
+
+        // On s'assure d'avoir des valeurs par défaut si bug
+        this.config.runTime = this.config.runTime || 45;
+        this.config.gameMode = this.config.gameMode || 'respawn';
+        this.config.allowedItems = this.config.allowedItems || [];
+
         this.mapId = mapId;
         this.players = {}; 
         this.sockets = {}; 
@@ -68,6 +74,21 @@ class GameRoom {
         this.broadcast('timerUpdate', 0);
     }
 
+    checkAllSelected() {
+        // On récupère la liste des joueurs
+        const activePlayers = Object.values(this.players);
+        
+        // On vérifie si TOUS les joueurs ont un 'selectedItem' non null
+        const allSelected = activePlayers.every(p => p.selectedItem !== null);
+
+        // Si tout le monde a choisi et qu'il y a des joueurs
+        if (allSelected && activePlayers.length > 0) {
+            console.log(`[${this.code}] Draft terminé (Tous ont choisi). Lancement Placement.`);
+            // On lance la phase suivante immédiatement
+            this.startPlacementPhase();
+        }
+    }
+
     // --- CORRECTION DU LANCEMENT ---
     startGame() {
         // 1. On passe en état de chargement
@@ -115,11 +136,13 @@ class GameRoom {
     startDraftPhase() {
         this.state = 'DRAFT';
         this.round++;
-        console.log(`[${this.code}] Phase DRAFT - Round ${this.round}`);
-        
-        // 1. On prépare la liste globale des objets sélectionnables
+        console.log(`[${this.code}] Phase DRAFT (Filtre actif)`);    
+
+        // On ne prend que les items qui sont dans ITEM_REGISTRY ET dans config.allowedItems
         const globalAvailableIds = Object.keys(ITEM_REGISTRY).filter(id => {
-            return !ITEM_REGISTRY[id].isSystem;
+            const isSystem = ITEM_REGISTRY[id].isSystem;
+            const isAllowed = this.config.allowedItems.includes(parseInt(id));
+            return !isSystem && isAllowed;
         });
 
         for (let pId in this.players) {
@@ -147,7 +170,12 @@ class GameRoom {
             this.draftOptions[pId] = options;
         }
 
-        this.broadcast('gameState', { state: 'DRAFT', round: this.round, options: this.draftOptions });
+        this.broadcast('gameState', { 
+            state: 'DRAFT', 
+            round: this.round, 
+            options: this.draftOptions,
+            roomConfig: { mode: this.config.gameMode } // <-- Info importante
+        });
         this.startTimer(10, () => this.startPlacementPhase());
     }
 
@@ -171,8 +199,16 @@ class GameRoom {
     startRunPhase() {
         this.state = 'RUN';
         this.stopTimer();
+        
+        // Reset des états de mort pour le nouveau round
+        for(let pId in this.players) {
+            this.players[pId].isDead = false; 
+        }
+
         this.broadcast('gameState', { state: 'RUN', map: this.mapData });
-        this.startTimer(45, () => this.startScorePhase());
+        
+        // On utilise la valeur de la config
+        this.startTimer(this.config.runTime, () => this.startScorePhase());
     }
 
     startScorePhase() {
@@ -261,21 +297,78 @@ class GameRoom {
         }
     }
 
-    playerFinished(playerId) {
+    checkEndRoundCondition() {
         if (this.state !== 'RUN') return;
-        const p = this.players[playerId];
-        if (p && !p.hasFinished) {
-            p.hasFinished = true;
-            const finishers = Object.values(this.players).filter(pl => pl.hasFinished).length;
-            const points = finishers === 1 ? 3 : 1;
-            p.score += points;
-            this.broadcast('playerGoal', { id: playerId, points });
-            if (finishers === Object.keys(this.players).length) {
+
+        const players = Object.values(this.players);
+        const totalPlayers = players.length;
+        if (totalPlayers === 0) return;
+
+        if (this.config.gameMode === 'perma') {
+            // MODE MORT SUBITE :
+            // La manche s'arrête s'il ne reste plus personne "en jeu".
+            // Un joueur est "en jeu" s'il n'est NI mort, NI arrivé.
+            const activeCount = players.filter(p => !p.isDead && !p.hasFinished).length;
+
+            if (activeCount === 0) {
+                console.log(`[${this.code}] Fin (Perma) : Tous morts ou arrivés.`);
+                this.startScorePhase();
+            }
+        } else {
+            // MODE CLASSIQUE (Respawn) :
+            // La manche s'arrête seulement quand TOUT LE MONDE est arrivé.
+            // (Les morts ne comptent pas car ils respawnent).
+            const finishedCount = players.filter(p => p.hasFinished).length;
+
+            if (finishedCount === totalPlayers) {
+                console.log(`[${this.code}] Fin (Classique) : Tous arrivés.`);
                 this.startScorePhase();
             }
         }
     }
-}
 
+    playerFinished(playerId) {
+        if (this.state !== 'RUN') return;
+        const p = this.players[playerId];
+        
+        // On vérifie qu'il n'a pas déjà fini pour ne pas compter les points en double
+        if (p && !p.hasFinished) {
+            p.hasFinished = true;
+            
+            // Calcul des points (Bonus pour le premier)
+            const finishers = Object.values(this.players).filter(pl => pl.hasFinished).length;
+            const points = finishers === 1 ? 3 : 1;
+            p.score += points;
+            
+            this.broadcast('playerGoal', { id: playerId, points });
+            
+            // VÉRIFICATION DE FIN DE MANCHE (Corrigé)
+            this.checkEndRoundCondition();
+        }
+    }
+
+    handlePlayerDeath(playerId, posData) {
+        if (this.state !== 'RUN') return;
+
+        const p = this.players[playerId];
+        if (p && !p.isDead) {
+            p.isDead = true;
+            console.log(`[${this.code}] Joueur ${playerId} mort.`);
+
+            // --- NOUVEAU : BROADCAST DE L'EFFET ---
+            // Si on a reçu une position valide du client
+            if (posData && posData.x !== undefined && posData.y !== undefined) {
+                this.broadcast('playerDeathEffect', {
+                    x: posData.x,
+                    y: posData.y,
+                    color: p.color // On envoie aussi la couleur du joueur pour un effet stylé
+                });
+            }
+
+            // vérification de fin de manche y
+            this.checkEndRoundCondition();
+        }
+    }
+}
 
 module.exports = GameRoom;

@@ -54,8 +54,24 @@ const ITEM_REGISTRY = {
         color: 0x00ffff,
         isSolid: false,
         canRotate: true,
-        onTouch: (player) => {
-            player.setVelocityY(-450);
+        onTouch: (player, item) => {
+            // Force de la poussée
+            const force = 450;
+
+            // Calcul de la direction :
+            // Par défaut (rotation 0), le sprite pointe vers le HAUT.
+            // Dans Phaser, 0° = Droite. Pour avoir le Haut, c'est -90°.
+            // On prend l'angle de l'objet et on retire 90 pour aligner la physique au visuel.
+            const angleCorrected = item.angle - 90;
+
+            if (player.scene) {
+                // On utilise la fonction de Phaser pour transformer l'angle en vitesse X/Y
+                const vec = player.scene.physics.velocityFromAngle(angleCorrected, force);
+                
+                // On applique le vecteur complet (X et Y)
+                // Cela permet de pousser à droite, à gauche, en bas, ou en diagonale !
+                player.setVelocity(vec.x, vec.y);
+            }
         }
     },
     6: {
@@ -95,7 +111,22 @@ const ITEM_REGISTRY = {
         canRotate: true,    
     },
 
-    // --- NOUVEAUX ITEMS SYSTÈME ---
+    10: {
+        id: 10,
+        name: "Nuke",
+        image: "nuke.png", // Assure-toi d'avoir une image ou le jeu utilisera la couleur
+        color: 0x00ff00,   // Vert fluo / Toxique
+        isSolid: false,
+        isDestructible: true,
+        hitbox: { w: 24, h: 24, ox: 4, oy: 4 }, // Un peu plus grosse
+        onTouch: (player, item) => {
+            // Déclenche la mort de tout le monde
+            const itemId = item.getData('id');
+            socket.emit('triggerNuke', itemId);
+        }
+    },
+
+    // --- ITEMS MAITRE ---
     90: { 
         id: 90, 
         name: "Départ", 

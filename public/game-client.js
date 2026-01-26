@@ -16,6 +16,8 @@ let goalGroup; // Groupe pour l'arrivée
 let pendingMapData = null;
 let pendingPlayersData = null;
 
+let roomConfig = { mode: 'respawn' };
+
 
 // --- CONFIGURATION PHASER ---
 const CONFIG = {
@@ -34,7 +36,7 @@ const CONFIG = {
         default: 'arcade', 
         arcade: { 
             gravity: { y: 1200 }, 
-            debug: false 
+            debug: true 
         } 
     },
     scene: { preload, create, update }
@@ -72,6 +74,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.wasJumpDown = false; // Mémoire de la touche
 
         this.isDead = false;
+        this.hasFinished = false;
         this.lastSendTime = 0;
 
         if (!this.isLocal) {
@@ -175,24 +178,54 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    die() {
-        if(this.isDead) return;
+die() {
+        if(this.isDead || this.hasFinished) return;
         this.isDead = true;
+        
+        // (Garde tes effets visuels locaux existants : setTint, setAlpha, etc.)
         this.setTint(0x555555);
         this.setVelocity(0,0);
         this.setAlpha(0.5);
-        
+        if(this.body) this.body.checkCollision.none = true;
+
+        if (this.isLocal) {
+            // On envoie un objet avec les coordonnées x et y
+            socket.emit('reportDeath', { x: this.x, y: this.y });
+            
+            // (Garde la logique du mode spectateur/respawn existante)
+            if (roomConfig.mode === 'perma') {
+                document.getElementById('phase-display').innerText = "ÉLIMINÉ (SPECTATEUR)";
+            }
+        }
+
+        // B. Gestion du Respawn selon le mode
         if(currentPhase === 'RUN') {
-            setTimeout(() => this.respawn(), 1500);
+            
+            if (roomConfig.mode === 'perma') {
+                // MODE PERMADEATH : On ne respawn PAS.
+                // On peut ajouter un texte UI "SPECTATEUR" si tu veux
+                if (this.isLocal) {
+                    document.getElementById('phase-display').innerText = "ÉLIMINÉ (SPECTATEUR)";
+                }
+            } else {
+                // MODE CLASSIQUE : On respawn après 1.5s
+                setTimeout(() => this.respawn(), 1500);
+            }
         }
     }
 
     respawn() {
         this.isDead = false;
+        this.hasFinished = false;
         this.setAlpha(1);
         this.clearTint();
         
-        // --- CORRECTION : Utilisation de la variable globale spawnPoint ---
+        if (this.body) {
+            this.body.checkCollision.none = false;
+        }
+        if (this.isLocal) {
+            socket.emit('playerRespawn');
+        }
         this.enableBody(true, spawnPoint.x, spawnPoint.y, true, true);
         
         this.setVelocity(0,0);
@@ -397,6 +430,7 @@ function update(time, delta) {
         // Arrivée
         this.physics.overlap(p, goalGroup, () => {
              socket.emit('reachedGoal');
+             p.hasFinished = true;
              p.disableBody(true, true);
              p.setPosition(spawnPoint.x, spawnPoint.y);
              p.targetX = spawnPoint.x; 
@@ -537,6 +571,86 @@ window.startGameClient = function(roomCode, playerName) {
         }
     });
 
+    socket.on('explosionEffect', (data) => {
+        const scene = game.scene.scenes[0];
+        if (!scene) return;
+
+        // --- 1. EFFET VISUEL (Nuage de fumée) ---
+        // On crée un cercle gris qui grandit et disparaît
+        const explosion = scene.add.circle(data.x, data.y, 10, 0xaaaaaa, 0.8);
+        
+        // On ajoute un contour blanc pour le style
+        explosion.setStrokeStyle(2, 0xffffff);
+
+        // Animation (Tween)
+        scene.tweens.add({
+            targets: explosion,
+            scale: 4,          // Grossit x4
+            alpha: 0,          // Devient transparent
+            duration: 500,     // Dure 0.5 seconde
+            onComplete: () => {
+                explosion.destroy(); // Nettoyage
+            }
+        });
+
+        // Secousse de caméra légère
+        scene.cameras.main.shake(200, 0.01);
+
+        // --- 2. MORT DU JOUEUR (Hitbox) ---
+        // On vérifie si MON joueur est proche de l'explosion
+        const myPlayer = playerMap[myPlayerId];
+        if (myPlayer && !myPlayer.isDead) {
+            const dx = myPlayer.x - data.x;
+            const dy = myPlayer.y - data.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            // On ajoute une marge de tolérance (ex: +16px pour la taille du joueur)
+            if (dist < (data.radius + 10)) {
+                console.log("BOUM ! Tu es mort.");
+                myPlayer.die();
+            }
+        }
+    });
+
+    socket.on('nukeDetonated', (pos) => {
+        // Effet visuel : Flash écran et secousse
+        const scene = game.scene.scenes[0];
+        if(scene) {
+            scene.cameras.main.shake(500, 0.05);
+            scene.cameras.main.flash(500, 255, 0, 0); // Flash rouge
+        }
+
+        // Mort du joueur local
+        if (playerMap[myPlayerId] && !playerMap[myPlayerId].isDead) {
+            playerMap[myPlayerId].die();
+        }
+    });
+
+    socket.on('playerDeathEffect', (data) => {
+        const scene = game.scene.scenes[0];
+        if (!scene) return;
+
+        // 1. Créer un cercle de la couleur du joueur mort
+        const effect = scene.add.circle(data.x, data.y, 25, data.color);
+        effect.setAlpha(0.8);
+        effect.setStrokeStyle(3, 0xffffff); // Un contour blanc pour faire ressortir
+
+        // 2. Animation : il grandit et disparaît ("Pouf!")
+        scene.tweens.add({
+            targets: effect,
+            scale: 2.5,      // Grossit
+            alpha: 0,        // Devient transparent
+            duration: 400,   // Rapide (0.4s)
+            ease: 'Quad.out', // Effet d'explosion
+            onComplete: () => {
+                effect.destroy(); // Nettoyage
+            }
+        });
+
+        // 3. (Optionnel) Une très légère secousse d'écran
+        scene.cameras.main.shake(150, 0.005);
+    });
+
     socket.on('redirectGame', (data) => window.location.href = data.url);
     socket.on('forceRedirect', (url) => window.location.href = url);
 };
@@ -548,6 +662,8 @@ function formatTime(seconds) {
 }
 
 function handleStateChange(data) {
+    
+    const previousPhase = currentPhase;
     currentPhase = data.state;
     
     const scene = game.scene.getScene('MainScene'); 
@@ -582,6 +698,10 @@ function handleStateChange(data) {
             if(data.options && myPlayerId && data.options[myPlayerId]) {
                 renderDraftCards(data.options[myPlayerId]);
             }
+            if (data.roomConfig) {
+                roomConfig = data.roomConfig;
+            }
+
             break;
 
         case 'PLACEMENT':
@@ -599,7 +719,14 @@ function handleStateChange(data) {
         case 'RUN':
             if(ghostItem) { ghostItem.destroy(); ghostItem = null; }
             if(markerGraphics) markerGraphics.setVisible(false);
-            if(playerMap[myPlayerId]) playerMap[myPlayerId].respawn();
+            
+            // --- CORRECTION DU BUG DE TELEPORTATION ICI ---
+            // On ne respawn QUE si on vient d'une autre phase (comme PLACEMENT).
+            // Si on était déjà en RUN (mise à jour de la carte par une bombe), on ne bouge pas !
+            if (previousPhase !== 'RUN') {
+                if(playerMap[myPlayerId]) playerMap[myPlayerId].respawn();
+            }
+            // ----------------------------------------------
             break;
 
         case 'SCORE':
@@ -697,5 +824,4 @@ function optimizeWalls() {
 window.onload = () => {
     game = new Phaser.Game(CONFIG);
 };
-
 

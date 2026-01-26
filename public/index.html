@@ -48,14 +48,15 @@
             <button onclick="goToJoinCode()" class="secondary">REJOINDRE VIA CODE</button>
         </div>
 
+        <script src="items.js"></script> 
+
         <div id="panel-create" class="panel">
             <h2>Créer un Salon</h2>
+            
             <input type="password" id="create-pass" placeholder="Mot de passe (Laisser vide pour aucun)">
             
             <label>Choisir la Carte :</label>
-            <select id="create-map">
-                <option value="" disabled selected>Chargement...</option>
-            </select>
+            <select id="create-map"><option>Chargement...</option></select>
             
             <label>Visibilité :</label>
             <select id="create-public">
@@ -63,7 +64,29 @@
                 <option value="false">Privé (Caché)</option>
             </select>
             
-            <button onclick="doCreateRoom()">VALIDER</button>
+            <button onclick="toggleAdvanced()" class="secondary" style="margin: 15px 0; background:#444; border:1px solid #666;">
+                ⚙️ Paramètres de la partie...
+            </button>
+
+            <div id="advanced-options" style="display:none; background:#222; padding:15px; border-radius:8px; border:1px solid #444; margin-bottom:15px;">
+                <h3 style="margin-top:0; font-size:16px; color:#aaa; border-bottom:1px solid #444; padding-bottom:5px;">Règles</h3>
+                
+                <label>Temps de la manche (secondes) :</label>
+                <input type="number" id="create-time" value="45" min="10" max="300">
+
+                <label>Mode de jeu :</label>
+                <select id="create-mode">
+                    <option value="respawn">Classique (Respawn infini)</option>
+                    <option value="perma">Mort Subite (1 seule vie)</option>
+                </select>
+
+                <h3 style="margin-top:15px; font-size:16px; color:#aaa; border-bottom:1px solid #444; padding-bottom:5px;">Objets Autorisés</h3>
+                
+                <div id="create-items-container" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap:10px; margin-top:10px;">
+                    </div>
+            </div>
+            
+            <button onclick="doCreateRoom()">VALIDER ET CRÉER</button>
             <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
         </div>
 
@@ -127,6 +150,7 @@
             showPanel('panel-create'); 
             // Demander la liste des cartes au serveur quand on ouvre ce menu
             socket.emit('requestMapList');
+            initCreateUI(); 
         } 
 
         socket.on('mapListUpdate', (maps) => {
@@ -145,17 +169,83 @@
 
         // --- ACTIONS SOCKET ---
 
+        function toggleAdvanced() {
+            const el = document.getElementById('advanced-options');
+            if (el.style.display === 'none') {
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
+        function initCreateUI() {
+            const container = document.getElementById('create-items-container');
+            container.innerHTML = "";
+
+            Object.values(ITEM_REGISTRY).forEach(item => {
+                if (!item.isSystem) {
+                    const checked = "checked";
+                    
+                    // On prépare l'image ou un carré de couleur si pas d'image
+                    let visual = "";
+                    if (item.image) {
+                        // Assure-toi que les images sont bien dans un dossier 'assets/' accessible
+                        visual = `<img src="assets/${item.image}" style="width:24px; height:24px; object-fit:contain; margin-right:8px;">`;
+                    } else {
+                        const colorHex = '#' + item.color.toString(16).padStart(6, '0');
+                        visual = `<div style="width:24px; height:24px; background:${colorHex}; margin-right:8px; border-radius:4px; border:1px solid #555;"></div>`;
+                    }
+
+                    // On crée une belle étiquette cliquable
+                    container.innerHTML += `
+                        <label style="
+                            background:#333; 
+                            padding:8px; 
+                            border-radius:6px; 
+                            font-size:13px; 
+                            display:flex; 
+                            align-items:center; 
+                            cursor:pointer; 
+                            border:1px solid #444; 
+                            user-select:none;
+                            transition:0.2s;
+                        " onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+                            
+                            <input type="checkbox" id="item-chk-${item.id}" value="${item.id}" ${checked} style="width:auto; margin:0 8px 0 0;">
+                            ${visual}
+                            <span>${item.name}</span>
+                        </label>`;
+                }
+            });
+        }
+
+
         // Créer
         function doCreateRoom() {
             const info = getUserInfo();
+            
+            // 1. Récupérer les items cochés
+            const allowedItems = [];
+            document.querySelectorAll('#create-items-container input[type="checkbox"]').forEach(chk => {
+                if(chk.checked) allowedItems.push(parseInt(chk.value));
+            });
+
+            // 2. Construire la config complète
             const config = {
                 name: info.name,
                 color: info.color,
                 password: document.getElementById('create-pass').value,
                 isPublic: document.getElementById('create-public').value === "true",
-                // On envoie l'ID de la carte choisie
-                mapId: document.getElementById('create-map').value
+                mapId: document.getElementById('create-map').value,
+                
+                // Nouveaux paramètres
+                runTime: parseInt(document.getElementById('create-time').value) || 45,
+                gameMode: document.getElementById('create-mode').value, // 'respawn' ou 'perma'
+                allowedItems: allowedItems
             };
+
+            if (allowedItems.length < 1) return alert("Il faut au moins 1 objet !");
+
             socket.emit('createRoom', config);
         }
 

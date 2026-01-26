@@ -46,7 +46,7 @@ io.on('connection', (socket) => {
         const code = Math.random().toString(36).substring(2, 7).toUpperCase();
         
         // On récupère l'ID de la map choisi dans la config, ou 'level1' par défaut
-        const mapId = config.mapId || 'level1';
+        const mapId = config.mapId || 'classique';
         
         const room = new GameRoom(code, socket.id, config, mapId, io, MAPS);
         rooms[code] = room;
@@ -106,11 +106,21 @@ io.on('connection', (socket) => {
 
     socket.on('selectItem', (itemId) => {
         const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        
         if (room && room.state === 'DRAFT') {
             const pId = room.sockets[socket.id];
-            // On cherche directement dans le registre avec l'ID reçu
+            
+            // On cherche l'item dans le registre
             const item = ITEM_REGISTRY[itemId];
-            if(item) room.players[pId].selectedItem = item;
+            
+            if(item) {
+                // On assigne l'item au joueur
+                room.players[pId].selectedItem = item;
+                
+                // --- AJOUTER CECI ---
+                // On vérifie si c'était le dernier joueur à choisir
+                room.checkAllSelected();
+            }
         }
     });
 
@@ -155,6 +165,26 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('reportDeath', (posData) => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (room) {
+            const pId = room.sockets[socket.id];
+            // On passe posData à la fonction de la room
+            room.handlePlayerDeath(pId, posData);
+        }
+    });
+
+    socket.on('playerRespawn', () => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (room && room.state === 'RUN') {
+            const pId = room.sockets[socket.id];
+            // On remet le joueur en vie côté serveur
+            if (room.players[pId]) {
+                room.players[pId].isDead = false;
+            }
+        }
+    });
+
     socket.on('triggerBomb', (itemId) => {
         const room = Object.values(rooms).find(r => r.sockets[socket.id]);
         if (!room || room.state !== 'RUN') return;
@@ -166,6 +196,19 @@ io.on('connection', (socket) => {
         if (ItemLogic[itemInstance.type]) {
             // On exécute la logique en lui passant la Room entière et l'item
             ItemLogic[itemInstance.type](room, itemInstance);
+        }
+    });
+
+    socket.on('triggerNuke', (itemId) => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (!room || room.state !== 'RUN') return;
+
+        const itemInstance = room.mapData.find(i => i.id === itemId);
+        if (!itemInstance) return;
+
+        // On appelle la logique ID 10 (définie à l'étape suivante)
+        if (ItemLogic[10]) {
+            ItemLogic[10](room, itemInstance);
         }
     });
 
