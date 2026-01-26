@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>NetParty 2D - Lobby</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { margin: 0; background: #121212; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        
+        /* Containers */
+        #ui-container { margin-top: 50px; width: 400px; position: relative; z-index: 10; }
+        .panel { background: #1e1e1e; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #333; display: none; }
+        .panel.active { display: block; }
+        
+        /* Inputs & Buttons */
+        h1, h2 { text-align: center; margin-top: 0; color: #e91e63; }
+        input, select, button { width: 100%; box-sizing: border-box; padding: 12px; margin: 8px 0; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: white; font-size: 16px; }
+        button { background: #e91e63; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #c2185b; }
+        button.secondary { background: #444; }
+        button.secondary:hover { background: #555; }
+        
+        /* Room List */
+        .room-item { background: #252525; padding: 10px; display: flex; justify-content: space-between; align-items: center; border-radius: 5px; margin-bottom: 5px; border-left: 4px solid #e91e63; }
+        
+        /* Errors */
+        #error-msg { color: #ff5252; text-align: center; margin-bottom: 10px; font-size: 14px; min-height: 20px;}
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        
+        <div id="panel-menu" class="panel active">
+            <h1>NETPARTY 2D</h1>
+            <div id="error-msg"></div>
+            
+            <label>Ton Pseudo</label>
+            <input type="text" id="username" placeholder="Pseudo" maxlength="10">
+            
+            <label>Ta Couleur</label>
+            <input type="color" id="usercolor" value="#00ff00" style="height: 50px; padding: 2px;">
+
+            <hr style="border-color: #333; margin: 20px 0;">
+            
+            <button onclick="goToCreate()">CRÉER UN SALON</button>
+            <button onclick="goToJoinList()">LISTE DES SALONS</button>
+            <button onclick="goToJoinCode()" class="secondary">REJOINDRE VIA CODE</button>
+        </div>
+
+        <div id="panel-create" class="panel">
+            <h2>Créer un Salon</h2>
+            <input type="password" id="create-pass" placeholder="Mot de passe (Laisser vide pour aucun)">
+            
+            <label>Choisir la Carte :</label>
+            <select id="create-map">
+                <option value="" disabled selected>Chargement...</option>
+            </select>
+            
+            <label>Visibilité :</label>
+            <select id="create-public">
+                <option value="true">Public (Visible)</option>
+                <option value="false">Privé (Caché)</option>
+            </select>
+            
+            <button onclick="doCreateRoom()">VALIDER</button>
+            <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
+        </div>
+
+        <div id="panel-list" class="panel">
+            <h2>Salons Publics</h2>
+            <div id="room-list-container">Chargement...</div>
+            <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
+        </div>
+
+        <div id="panel-code" class="panel">
+            <h2>Rejoindre</h2>
+            <input type="text" id="join-code-input" placeholder="Entrer le Code du Salon (ex: ABCDE)" style="text-transform:uppercase">
+            <input type="password" id="join-pass-input" placeholder="Mot de passe (Si nécessaire)">
+            <button onclick="doJoinByCode()">REJOINDRE</button>
+            <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
+        </div>
+
+        <div id="panel-lobby" class="panel">
+            <h2 id="lobby-code">CODE: ----</h2>
+            <p style="text-align:center; color:#aaa">En attente de l'hôte...</p>
+            <div id="player-list" style="margin: 20px 0; background:#111; padding:10px; border-radius:5px;"></div>
+            
+            <button id="btn-start" onclick="doStartGame()" style="display:none">LANCER LA PARTIE</button>
+            <button onclick="location.reload()" class="secondary">QUITTER</button>
+        </div>
+    </div>
+
+    <script>
+        // Initialisation Socket
+        const socket = io();
+
+        // --- SAUVEGARDE ET CHARGEMENT LOCALE ---
+        window.addEventListener('load', () => {
+            const savedName = localStorage.getItem('np_username');
+            const savedColor = localStorage.getItem('np_usercolor');
+
+            if(savedName) document.getElementById('username').value = savedName;
+            if(savedColor) document.getElementById('usercolor').value = savedColor;
+        });
+
+        // --- NAVIGATION UI ---
+        function showPanel(id) {
+            document.querySelectorAll('.panel').forEach(el => el.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            document.getElementById('error-msg').innerText = "";
+        }
+
+        function getUserInfo() {
+            const name = document.getElementById('username').value || "Joueur" + Math.floor(Math.random()*1000);
+            const colorRaw = document.getElementById('usercolor').value;
+            const color = parseInt(colorRaw.replace('#', '0x'));
+            
+            // SAUVEGARDE
+            localStorage.setItem('np_username', name);
+            localStorage.setItem('np_usercolor', colorRaw);
+            
+            return { name, color };
+        }
+
+        function goToCreate() { 
+            showPanel('panel-create'); 
+            // Demander la liste des cartes au serveur quand on ouvre ce menu
+            socket.emit('requestMapList');
+        } 
+
+        socket.on('mapListUpdate', (maps) => {
+            const select = document.getElementById('create-map');
+            select.innerHTML = "";
+            maps.forEach(m => {
+                select.innerHTML += `<option value="${m.id}">${m.name}</option>`;
+            });
+        });
+
+        function goToJoinCode() { showPanel('panel-code'); }
+        function goToJoinList() { 
+            showPanel('panel-list'); 
+            socket.emit('requestRoomList');
+        }
+
+        // --- ACTIONS SOCKET ---
+
+        // Créer
+        function doCreateRoom() {
+            const info = getUserInfo();
+            const config = {
+                name: info.name,
+                color: info.color,
+                password: document.getElementById('create-pass').value,
+                isPublic: document.getElementById('create-public').value === "true",
+                // On envoie l'ID de la carte choisie
+                mapId: document.getElementById('create-map').value
+            };
+            socket.emit('createRoom', config);
+        }
+
+        // Rejoindre via la liste
+        function joinFromList(code, hasPass) {
+            const info = getUserInfo();
+            let pass = "";
+            if(hasPass) pass = prompt("Ce salon est protégé. Mot de passe ?");
+            
+            socket.emit('joinRoom', { code, password: pass, name: info.name, color: info.color });
+        }
+
+        // Rejoindre via code manuel
+        function doJoinByCode() {
+            const info = getUserInfo();
+            const code = document.getElementById('join-code-input').value.toUpperCase().trim();
+            const pass = document.getElementById('join-pass-input').value;
+
+            if(code.length < 5) return alert("Code invalide");
+
+            socket.emit('joinRoom', { code, password: pass, name: info.name, color: info.color });
+        }
+
+        // Lancer la partie
+        function doStartGame() {
+            const codeText = document.getElementById('lobby-code').innerText.split(' ')[1];
+            socket.emit('startGame', codeText);
+        }
+
+        // --- ÉCOUTEURS SOCKET ---
+
+        socket.on('errorMsg', (msg) => {
+            alert(msg);
+        });
+
+        socket.on('roomListUpdate', (rooms) => {
+            const container = document.getElementById('room-list-container');
+            container.innerHTML = "";
+            if(rooms.length === 0) container.innerHTML = "<p>Aucun salon public.</p>";
+            
+            rooms.forEach(r => {
+                container.innerHTML += `
+                    <div class="room-item">
+                        <span><b>${r.code}</b> (${r.count}/${r.max}) ${r.hasPass ? '🔒' : ''}</span>
+                        <button style="width:auto; padding:5px 15px; font-size:12px" 
+                            onclick="joinFromList('${r.code}', ${r.hasPass})">GO</button>
+                    </div>`;
+            });
+        });
+
+        socket.on('roomJoined', (data) => {
+            showPanel('panel-lobby');
+            document.getElementById('lobby-code').innerText = `CODE: ${data.code}`;
+            // On délègue l'affichage à updatePlayers
+            updateLobbyUI(data.players);
+        });
+
+        socket.on('updatePlayers', (players) => {
+            updateLobbyUI(players);
+        });
+
+        function updateLobbyUI(players) {
+            const list = document.getElementById('player-list');
+            list.innerHTML = "";
+            
+            // Récupérer mon nom local pour vérifier si je suis l'hôte
+            const myName = localStorage.getItem('np_username');
+            let amIHost = false;
+
+            Object.values(players).forEach(p => {
+                const colorHex = '#' + p.color.toString(16).padStart(6, '0');
+                
+                // Si ce joueur correspond à mon nom ET qu'il est host
+                if(p.name === myName && p.isHost) {
+                    amIHost = true;
+                }
+
+                list.innerHTML += `<div style="color:${colorHex}; margin:5px">
+                    ${p.isHost ? '👑' : '👤'} ${p.name}
+                </div>`;
+            });
+
+            // Bouton Start visible seulement si je suis l'host
+            document.getElementById('btn-start').style.display = amIHost ? 'block' : 'none';
+        }
+
+        // --- REDIRECTION VERS LE JEU ---
+        socket.on('redirectGame', (data) => {
+            console.log("Lancement de la partie, redirection vers :", data.url);
+            window.location.href = data.url;
+        });
+
+    </script>
+</body>
+</html>

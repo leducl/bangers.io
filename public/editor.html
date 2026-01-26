@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>NetParty - Éditeur Pro</title>
+    <style>
+        body { margin: 0; background-color: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; }
+
+        /* Canvas */
+        #canvas-container {
+            flex: 1; display: flex; justify-content: center; align-items: center;
+            background-image: linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px);
+            background-size: 32px 32px; background-position: center;
+        }
+        canvas { background: #222; box-shadow: 0 0 20px rgba(0,0,0,0.5); cursor: none; /* On cache le curseur pour afficher le ghost */ }
+
+        /* Sidebar */
+        #sidebar { width: 320px; background: #252525; border-left: 2px solid #444; padding: 15px; display: flex; flex-direction: column; gap: 15px; }
+        h2 { margin: 0 0 10px 0; color: #e91e63; text-align: center; font-size: 1.2rem; }
+
+        /* Toolbar (Nouveau) */
+        .toolbar { display: flex; gap: 5px; background: #333; padding: 5px; border-radius: 5px; justify-content: space-around; }
+        .tool-btn { 
+            padding: 8px 12px; border: 1px solid #555; background: #444; color: #fff; border-radius: 4px; cursor: pointer; flex: 1; text-align: center; font-size: 14px;
+        }
+        .tool-btn:hover { background: #555; }
+        .tool-btn.active { background: #e91e63; border-color: #ff4081; font-weight: bold; }
+
+        /* Palette */
+        #palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; flex: 1; padding-right: 5px; align-content: baseline;     align-items: baseline; }
+        .palette-item { 
+            width: 100%; aspect-ratio: 1; border: 2px solid #444; border-radius: 4px; cursor: pointer; 
+            display: flex; justify-content: center; align-items: center; background: #333; transition: 0.1s;
+        }
+        .palette-item img { max-width: 28px; max-height: 28px; image-rendering: pixelated; }
+        .palette-item:hover { border-color: #aaa; transform: scale(1.05); }
+        .palette-item.selected { border-color: #e91e63; background: #3c1e26; box-shadow: 0 0 5px #e91e63; }
+
+        /* Footer */
+        .controls { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+        input[type="text"] { padding: 8px; background: #333; border: 1px solid #555; color: white; border-radius: 4px; }
+        button { padding: 10px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #555; }
+        button.primary { background: #e91e63; }
+        button.primary:hover { background: #d81b60; }
+        button.danger { background: #d32f2f; }
+        
+        /* Infos */
+        .info-text { font-size: 11px; color: #888; text-align: center; margin-top: 5px; }
+        
+        #file-input { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <canvas id="levelCanvas" width="800" height="600"></canvas>
+    </div>
+
+    <div id="sidebar">
+        <h2>ÉDITEUR</h2>
+        
+        <div class="toolbar">
+            <div class="tool-btn active" onclick="setTool('brush')" title="Pinceau (B)">✏️</div>
+            <div class="tool-btn" onclick="setTool('fill')" title="Remplir (F)">🪣</div>
+            <div class="tool-btn" onclick="setTool('eraser')" title="Gomme (E)">🧼</div>
+        </div>
+
+        <div id="palette"></div>
+
+        <div class="controls">
+            <hr style="width:100%; border-color:#444; margin: 5px 0;">
+            <label style="font-size:12px">Nom du Niveau</label>
+            <input type="text" id="levelName" value="Niveau 1">
+            
+            <div style="display:flex; gap:5px;">
+                <button class="primary" style="flex:1" onclick="exportJSON()">💾 SAVE</button>
+                <button style="flex:1" onclick="document.getElementById('file-input').click()">📂 LOAD</button>
+            </div>
+            
+            <input type="file" id="file-input" accept=".json" onchange="importJSON(this)">
+            <button class="danger" onclick="clearMap()">🗑️ RESET</button>
+            
+            <div class="info-text">
+                Clic Droit: Gomme Rapide<br>
+                Raccourcis: B, F, E
+            </div>
+        </div>
+    </div>
+
+    <script src="items.js"></script>
+    <script src="editor.js"></script>
+</body>
+</html>
