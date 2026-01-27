@@ -359,6 +359,7 @@ class GameRoom {
             // Si on a reçu une position valide du client
             if (posData && posData.x !== undefined && posData.y !== undefined) {
                 this.broadcast('playerDeathEffect', {
+                    id: playerId,
                     x: posData.x,
                     y: posData.y,
                     color: p.color // On envoie aussi la couleur du joueur pour un effet stylé

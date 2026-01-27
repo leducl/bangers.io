@@ -55,22 +55,41 @@ const ITEM_REGISTRY = {
         isSolid: false,
         canRotate: true,
         onTouch: (player, item) => {
-            // Force de la poussée
             const force = 450;
-
-            // Calcul de la direction :
-            // Par défaut (rotation 0), le sprite pointe vers le HAUT.
-            // Dans Phaser, 0° = Droite. Pour avoir le Haut, c'est -90°.
-            // On prend l'angle de l'objet et on retire 90 pour aligner la physique au visuel.
+            
+            // Calcul de l'angle (0° visuel = Haut = -90° physique)
             const angleCorrected = item.angle - 90;
 
             if (player.scene) {
-                // On utilise la fonction de Phaser pour transformer l'angle en vitesse X/Y
+                // 1. Vecteur de poussée du ventilo
                 const vec = player.scene.physics.velocityFromAngle(angleCorrected, force);
                 
-                // On applique le vecteur complet (X et Y)
-                // Cela permet de pousser à droite, à gauche, en bas, ou en diagonale !
-                player.setVelocity(vec.x, vec.y);
+                // 2. LOGIQUE DE PRIORITÉ INPUT (Anti-Bloquage)
+                
+                // --- AXE X (Horizontal) ---
+                if (vec.x !== 0) {
+                    // Est-ce que le joueur essaie d'aller CONTRE le vent ?
+                    // Ex: Vent pousse à Droite (vec.x > 0) MAIS Joueur va à Gauche (vel.x < -10)
+                    const fightingWind = (vec.x > 0 && player.body.velocity.x < -10) ||
+                                         (vec.x < 0 && player.body.velocity.x > 10);
+
+                    // On n'applique la force du vent QUE si le joueur ne lutte pas contre
+                    if (!fightingWind) {
+                        player.setVelocityX(vec.x);
+                    }
+                }
+
+                // --- AXE Y (Vertical) ---
+                if (vec.y !== 0) {
+                    // Pour le vertical, on garde la logique de blocage simple 
+                    // (pour éviter de rester collé au plafond ou au sol)
+                    const pushingDownBlocked = (vec.y > 0 && player.body.blocked.down);
+                    const pushingUpBlocked   = (vec.y < 0 && player.body.blocked.up);
+
+                    if (!pushingDownBlocked && !pushingUpBlocked) {
+                         player.setVelocityY(vec.y);
+                    }
+                }
             }
         }
     },

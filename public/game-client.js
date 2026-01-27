@@ -45,7 +45,7 @@ const CONFIG = {
 
 // --- CLASSES ---
 class Player extends Phaser.Physics.Arcade.Sprite {
-    constructor(scene, x, y, color, id) {
+    constructor(scene, x, y, color, id, name) {
         super(scene, x, y, 'player_base');
         scene.add.existing(this);
         scene.physics.add.existing(this);
@@ -59,8 +59,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.body.setFriction(0, 0);
 
         this.id = id;
+        this.playerName = name || "Joueur"; // Stockage du nom
         this.isLocal = (id === myPlayerId);
         
+        // --- 1. CRÉATION DU TEXTE DU NOM ---
+        // Style petit, blanc avec contour noir pour lisibilité
+        this.nameText = scene.add.text(x, y - 25, this.playerName, {
+            fontSize: '11px',
+            fontFamily: 'Segoe UI, Arial',
+            fill: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 2,
+            align: 'center'
+        }).setOrigin(0.5);
+
         this.targetX = x;
         this.targetY = y;
         
@@ -84,6 +96,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     update(keys, time) {
+
+        // Le texte suit le joueur
+        if (this.nameText) {
+            this.nameText.setPosition(this.x, this.y - 30);
+            // Optionnel : Masquer le texte si le joueur est mort/invisible
+            this.nameText.setVisible(this.visible && this.alpha > 0);
+        }
+
         if (!this.isLocal) {
             this.x = Phaser.Math.Interpolation.Linear([this.x, this.targetX], 0.2);
             this.y = Phaser.Math.Interpolation.Linear([this.y, this.targetY], 0.2);
@@ -178,7 +198,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-die() {
+    die() {
         if(this.isDead || this.hasFinished) return;
         this.isDead = true;
         
@@ -231,6 +251,11 @@ die() {
         this.setVelocity(0,0);
         this.targetX = spawnPoint.x;
         this.targetY = spawnPoint.y;
+    }
+
+    destroy(fromScene) {
+        if (this.nameText) this.nameText.destroy();
+        super.destroy(fromScene);
     }
 }
 
@@ -435,6 +460,9 @@ function update(time, delta) {
              p.setPosition(spawnPoint.x, spawnPoint.y);
              p.targetX = spawnPoint.x; 
              p.targetY = spawnPoint.y;
+
+             p.setVisible(false);
+                 if(p.nameText) p.nameText.setVisible(false);
         });
 
         // Mort chute
@@ -450,6 +478,47 @@ function update(time, delta) {
 }
 
 // --- FONCTIONS UTILITAIRES ---
+
+
+// --- AJOUT : FONCTION TABLEAU DES SCORES IN-GAME ---
+function updateIngameScoreboard() {
+    const container = document.getElementById('ingame-scoreboard');
+    if (!container) return;
+
+    // On récupère les joueurs et on les trie
+    const players = Object.values(playerMap).sort((a, b) => {
+        if (a.hasFinished && !b.hasFinished) return -1;
+        if (!a.hasFinished && b.hasFinished) return 1;
+        return 0;
+    });
+
+    let html = '';
+    players.forEach(p => {
+        // --- LOGIQUE MODIFIÉE ---
+        let status = '';
+        
+        if (p.hasFinished) {
+            status = '🏁'; // Drapeau si fini (prioritaire)
+        } 
+        else if (p.isDead && roomConfig.mode === 'perma') {
+            status = '💀'; // Crâne UNIQUEMENT si mort ET mode Mort Subite
+        }
+        // En mode respawn classique, on n'affiche rien quand le joueur meurt (car il va revivre)
+        
+        const colorHex = '#' + p.tintTopLeft.toString(16).padStart(6, '0');
+        
+        html += `
+            <div class="sb-row">
+                <div style="display:flex; align-items:center;">
+                    <span class="sb-color" style="background:${colorHex}"></span>
+                    <span>${p.playerName}</span>
+                </div>
+                <span class="sb-status">${status}</span>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
 
 function spawnItem(itemData) {
     const def = ITEM_REGISTRY[itemData.type];
@@ -553,6 +622,26 @@ window.startGameClient = function(roomCode, playerName) {
 
     socket.on('gameState', (data) => handleStateChange(data));
 
+
+    // --- AJOUTS POUR LE SCOREBOARD ---
+    
+    // 1. Quand un joueur atteint l'arrivée
+    socket.on('playerGoal', (data) => {
+        if (playerMap[data.id]) {
+            playerMap[data.id].hasFinished = true; // Marquer comme fini localement
+            updateIngameScoreboard(); // Mettre à jour le panneau
+        }
+    });
+
+    // 2. Quand la liste des joueurs change (connexion/déconnexion)
+    socket.on('updatePlayers', (playersData) => {
+         const scene = game.scene.scenes[0];
+         if(scene) {
+             syncPlayers(scene, playersData);
+             updateIngameScoreboard();
+         }
+    });
+
     socket.on('itemPlaced', (item) => {
         if(item.owner === myPlayerId) {
             hasPlacedItem = true;
@@ -627,6 +716,21 @@ window.startGameClient = function(roomCode, playerName) {
     });
 
     socket.on('playerDeathEffect', (data) => {
+        // 1. Mise à jour Logique & UI
+        if (data.id && playerMap[data.id]) {
+            const p = playerMap[data.id];
+            
+            // Si c'est un joueur distant qui n'est pas encore marqué mort localement
+            // On le tue pour qu'il devienne gris/crâne visuellement sur la map
+            if (!p.isDead && data.id !== myPlayerId) {
+                p.die(); 
+            }
+            
+            // On rafraîchit le tableau pour afficher le crâne 💀
+            updateIngameScoreboard();
+        }
+
+        // 2. Effets Particules (Code existant)
         const scene = game.scene.scenes[0];
         if (!scene) return;
 
@@ -675,10 +779,21 @@ function handleStateChange(data) {
     document.getElementById('draft-menu').style.display = 'none';
     document.getElementById('scoreboard').style.display = 'none';
 
-    if (data.players) {
-        if(isSceneReady) syncPlayers(activeScene, data.players);
-        else pendingPlayersData = data.players;
+
+    // --- AJOUT : Gérer la visibilité du petit scoreboard ---
+    const ingameBoard = document.getElementById('ingame-scoreboard');
+    // On l'affiche seulement pendant le placement et la course
+    if (ingameBoard) {
+        ingameBoard.style.display = (currentPhase === 'RUN' || currentPhase === 'PLACEMENT') ? 'block' : 'none';
     }
+
+    if (data.players) {
+        if(isSceneReady) {
+            syncPlayers(activeScene, data.players);
+            updateIngameScoreboard(); // <--- AJOUT : Rafraîchir ici
+        } else pendingPlayersData = data.players;
+    }
+
     if (data.map) {
         if(isSceneReady) syncMap(activeScene, data.map);
         else pendingMapData = data.map;
@@ -719,18 +834,17 @@ function handleStateChange(data) {
         case 'RUN':
             if(ghostItem) { ghostItem.destroy(); ghostItem = null; }
             if(markerGraphics) markerGraphics.setVisible(false);
-            
-            // --- CORRECTION DU BUG DE TELEPORTATION ICI ---
-            // On ne respawn QUE si on vient d'une autre phase (comme PLACEMENT).
-            // Si on était déjà en RUN (mise à jour de la carte par une bombe), on ne bouge pas !
             if (previousPhase !== 'RUN') {
                 if(playerMap[myPlayerId]) playerMap[myPlayerId].respawn();
             }
-            // ----------------------------------------------
+
+            updateIngameScoreboard();
             break;
 
         case 'SCORE':
             document.getElementById('scoreboard').style.display = 'block';
+            // On cache le petit pour montrer le gros tableau final
+            if (ingameBoard) ingameBoard.style.display = 'none'; 
             renderScoreboard(data.players, data.winner);
             break;
     }
@@ -740,8 +854,13 @@ function syncPlayers(scene, playersData) {
     const localName = localStorage.getItem('np_username');
     Object.values(playersData).forEach(pData => {
         if(pData.name === localName) myPlayerId = pData.id;
+        
         if(!playerMap[pData.id]) {
-            playerMap[pData.id] = new Player(scene, 50, 500, pData.color, pData.id);
+            // PASSAGE DU NOM ICI
+            playerMap[pData.id] = new Player(scene, 50, 500, pData.color, pData.id, pData.name);
+        } else {
+            // Si le joueur existe, on met à jour son état (utile pour les reconnexions)
+            playerMap[pData.id].hasFinished = pData.hasFinished || false;
         }
     });
 }
@@ -824,5 +943,4 @@ function optimizeWalls() {
 window.onload = () => {
     game = new Phaser.Game(CONFIG);
 };
-
 
