@@ -34,8 +34,12 @@ io.on('connection', (socket) => {
 
 
     socket.on('requestMapList', () => {
-        // On envoie juste { id: 'level1', name: 'Plaines Vertes' }
-        const list = Object.keys(MAPS).map(id => ({ id: id, name: MAPS[id].name }));
+
+        const list = Object.keys(MAPS).map(id => ({ 
+            id: id, 
+            name: MAPS[id].name,
+            data: MAPS[id].data // <-- Ajout vital pour la preview
+        }));
         socket.emit('mapListUpdate', list);
     });
 
@@ -52,7 +56,14 @@ io.on('connection', (socket) => {
         rooms[code] = room;
         room.addPlayer(socket.id, config.name, config.color);
         socket.join(code);
-        socket.emit('roomJoined', { code, isHost: true, players: room.players });
+        socket.emit('roomJoined', { 
+            code, 
+            isHost: true, 
+            players: room.players,
+            // AJOUT : On envoie les données de la map pour l'affichage
+            mapData: MAPS[mapId].data,
+            mapName: MAPS[mapId].name
+        });
         io.emit('roomListUpdate', getPublicRooms());
     });
 
@@ -63,7 +74,14 @@ io.on('connection', (socket) => {
         
         room.addPlayer(socket.id, data.name, data.color);
         socket.join(data.code);
-        socket.emit('roomJoined', { code: data.code, isHost: false, players: room.players });
+        socket.emit('roomJoined', { 
+            code: data.code, 
+            isHost: false, 
+            players: room.players,
+            // AJOUT
+            mapData: room.MAPS[room.mapId].data,
+            mapName: room.MAPS[room.mapId].name
+        });
         io.to(data.code).emit('updatePlayers', room.players);
         io.emit('roomListUpdate', getPublicRooms());
     });
@@ -87,16 +105,41 @@ io.on('connection', (socket) => {
                     socket.join(data.code);
                     found = true;
                     
-                    // --- MODIFICATION ICI ---
-                    // On envoie systématiquement la map et l'état actuel
+                    const player = room.players[pId];
+                    player.online = true; 
+                    if (room.disconnectedPlayers && room.disconnectedPlayers[pId]) {
+                        delete room.disconnectedPlayers[pId];
+                    }
+
+                    // --- AJOUT : GESTION DE LA MORT SUR RECONNEXION ---
+                    // Si on est en phase de RUN et en mode PERMA, le joueur doit mourir
+                    if (room.state === 'RUN' && room.config.gameMode === 'perma') {
+                        // S'il n'avait pas fini, il meurt
+                        if (!player.hasFinished) {
+                            player.isDead = true; 
+                            console.log(`[${room.code}] ${player.name} éliminé suite à reconnexion (Mode Perma).`);
+                        }
+                    }
+                    // --------------------------------------------------
+                    
+                    console.log(`[${room.code}] ${player.name} est RECONNECTÉ.`);
+
                     socket.emit('gameState', { 
                         state: room.state, 
-                        map: room.mapData, // Envoie la map dès maintenant !
+                        map: room.mapData, 
                         players: room.players,
-                        options: room.draftOptions 
+                        options: room.draftOptions,
+                        roomConfig: { mode: room.config.gameMode }
                     });
                     
                     socket.emit('timerUpdate', room.timerValue);
+                    io.to(room.code).emit('updatePlayers', room.players);
+                    
+                    // Vérifications de blocage
+                    if (room.state === 'DRAFT') room.checkAllSelected();
+                    if (room.state === 'PLACEMENT') room.checkAllPlaced();
+                    if (room.state === 'RUN') room.checkEndRoundCondition(); // <-- Vérif utile si sa mort termine la manche
+
                     break;
                 }
             }
@@ -142,26 +185,35 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
+        // Trouver la room du joueur
         const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        
         if (room) {
-            const pId = room.sockets[socket.id];
-            const wasHost = room.players[pId] && room.players[pId].isHost;
-            delete room.sockets[socket.id];
-
             if (room.state === 'LOBBY') {
+                // --- LOGIQUE LOBBY (inchangée : suppression totale) ---
+                const pId = room.sockets[socket.id];
+                delete room.sockets[socket.id];
                 delete room.players[pId];
-                if (Object.keys(room.players).length === 0) delete rooms[room.code];
-                else {
-                    if (wasHost) {
-                        const nextPlayerId = Object.keys(room.players)[0];
-                        if(nextPlayerId) room.players[nextPlayerId].isHost = true;
+                
+                if (Object.keys(room.players).length === 0) {
+                    delete rooms[room.code];
+                } else {
+                    // Gestion changement d'hôte si besoin
+                    const firstPId = Object.keys(room.players)[0];
+                    if(firstPId && !Object.values(room.players).some(p => p.isHost)) {
+                        room.players[firstPId].isHost = true;
                     }
                     io.to(room.code).emit('updatePlayers', room.players);
                 }
-                io.emit('roomListUpdate', getPublicRooms());
             } else {
-                console.log(`[${room.code}] ${pId} déconnecté temporairement.`);
+                // --- LOGIQUE EN JEU (Nouvelle méthode) ---
+                // On délègue tout à la Room pour qu'elle recalcule les états
+                room.handleDisconnect(socket.id);
+                
+                // On prévient les autres que X est déconnecté (visuellement)
+                io.to(room.code).emit('updatePlayers', room.players);
             }
+            io.emit('roomListUpdate', getPublicRooms());
         }
     });
 
@@ -181,6 +233,9 @@ io.on('connection', (socket) => {
             // On remet le joueur en vie côté serveur
             if (room.players[pId]) {
                 room.players[pId].isDead = false;
+                if (room.players[pId].originalColor) {
+                    room.players[pId].color = room.players[pId].originalColor;
+                }
             }
         }
     });

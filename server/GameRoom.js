@@ -11,6 +11,8 @@ class GameRoom {
         this.hostId = hostId;
         this.config = config;
 
+        this.config.maxScore = parseInt(this.config.maxScore) || 20;
+        
         // On s'assure d'avoir des valeurs par défaut si bug
         this.config.runTime = this.config.runTime || 45;
         this.config.gameMode = this.config.gameMode || 'respawn';
@@ -18,6 +20,7 @@ class GameRoom {
 
         this.mapId = mapId;
         this.players = {}; 
+        this.disconnectedPlayers = {};
         this.sockets = {}; 
         this.state = 'LOBBY'; 
         
@@ -31,19 +34,32 @@ class GameRoom {
     }
 
     addPlayer(socketId, name, color) {
-        const playerId = name + "_" + this.code; 
-        if (!this.players[playerId]) {
+        const playerId = name + "_" + this.code;
+        
+        // Si le joueur était déconnecté, on le restaure
+        if (this.disconnectedPlayers[playerId]) {
+            console.log(`[${this.code}] Restauration de ${name}`);
+            this.players[playerId] = this.disconnectedPlayers[playerId];
+            this.players[playerId].online = true;
+            delete this.disconnectedPlayers[playerId];
+        } 
+        else if (!this.players[playerId]) {
+            // Nouveau joueur (logique existante)
             this.players[playerId] = {
                 id: playerId,
                 name: name,
                 color: color,
+                originalColor: color,
                 score: 0,
                 isHost: socketId === this.hostId,
                 selectedItem: null,
                 hasFinished: false,
-                hasPlaced: false
+                hasPlaced: false,
+                online: true,
+                isDead: false
             };
         }
+        
         this.sockets[socketId] = playerId;
         return { success: true, playerId };
     }
@@ -75,16 +91,14 @@ class GameRoom {
     }
 
     checkAllSelected() {
-        // On récupère la liste des joueurs
-        const activePlayers = Object.values(this.players);
+        // On ne prend que les joueurs EN LIGNE
+        const onlinePlayers = Object.values(this.players).filter(p => p.online);
         
-        // On vérifie si TOUS les joueurs ont un 'selectedItem' non null
-        const allSelected = activePlayers.every(p => p.selectedItem !== null);
+        // Si tout les joueurs connectés ont choisi
+        const allSelected = onlinePlayers.every(p => p.selectedItem !== null);
 
-        // Si tout le monde a choisi et qu'il y a des joueurs
-        if (allSelected && activePlayers.length > 0) {
-            console.log(`[${this.code}] Draft terminé (Tous ont choisi). Lancement Placement.`);
-            // On lance la phase suivante immédiatement
+        // On vérifie qu'il reste au moins 1 joueur (sinon le jeu plante)
+        if (allSelected && onlinePlayers.length > 0) {
             this.startPlacementPhase();
         }
     }
@@ -217,7 +231,7 @@ class GameRoom {
 
         let winner = null;
         for(let pId in this.players) {
-            if(this.players[pId].score >= 50) winner = this.players[pId];
+            if(this.players[pId].score >= this.config.maxScore) winner = this.players[pId];
         }
 
         this.broadcast('gameState', { state: 'SCORE', players: this.players, winner: winner });
@@ -290,9 +304,12 @@ class GameRoom {
     }
 
     checkAllPlaced() {
-        const activePlayers = Object.values(this.players); 
-        const allDone = activePlayers.every(p => p.hasPlaced);
-        if (allDone && activePlayers.length > 0) {
+        const onlinePlayers = Object.values(this.players).filter(p => p.online);
+        
+        // Vérifier si tous les connectés ont placé
+        const allDone = onlinePlayers.every(p => p.hasPlaced);
+        
+        if (allDone && onlinePlayers.length > 0) {
             this.startRunPhase();
         }
     }
@@ -301,29 +318,24 @@ class GameRoom {
         if (this.state !== 'RUN') return;
 
         const players = Object.values(this.players);
-        const totalPlayers = players.length;
-        if (totalPlayers === 0) return;
+        // On compte seulement les joueurs CONNECTÉS
+        const onlinePlayers = players.filter(p => p.online);
+
+        if (onlinePlayers.length === 0) {
+            // Si plus personne n'est là, on arrête ou on attend (au choix)
+            // Ici je propose de passer au score pour "mettre en pause" la logique
+            this.startScorePhase(); 
+            return;
+        }
 
         if (this.config.gameMode === 'perma') {
-            // MODE MORT SUBITE :
-            // La manche s'arrête s'il ne reste plus personne "en jeu".
-            // Un joueur est "en jeu" s'il n'est NI mort, NI arrivé.
-            const activeCount = players.filter(p => !p.isDead && !p.hasFinished).length;
-
-            if (activeCount === 0) {
-                console.log(`[${this.code}] Fin (Perma) : Tous morts ou arrivés.`);
-                this.startScorePhase();
-            }
+            // En mode PERMA, on attend que tous les joueurs CONNECTÉS soient morts ou arrivés
+            const activeCount = onlinePlayers.filter(p => !p.isDead && !p.hasFinished).length;
+            if (activeCount === 0) this.startScorePhase();
         } else {
-            // MODE CLASSIQUE (Respawn) :
-            // La manche s'arrête seulement quand TOUT LE MONDE est arrivé.
-            // (Les morts ne comptent pas car ils respawnent).
-            const finishedCount = players.filter(p => p.hasFinished).length;
-
-            if (finishedCount === totalPlayers) {
-                console.log(`[${this.code}] Fin (Classique) : Tous arrivés.`);
-                this.startScorePhase();
-            }
+            // En mode RESPAWN, on attend que tous les joueurs CONNECTÉS soient arrivés
+            const finishedCount = onlinePlayers.filter(p => p.hasFinished).length;
+            if (finishedCount === onlinePlayers.length) this.startScorePhase();
         }
     }
 
@@ -345,6 +357,30 @@ class GameRoom {
             // VÉRIFICATION DE FIN DE MANCHE (Corrigé)
             this.checkEndRoundCondition();
         }
+    }
+
+    // Nouvelle méthode dans GameRoom
+    handleDisconnect(socketId) {
+        const pId = this.sockets[socketId];
+        if (!pId || !this.players[pId]) return;
+
+        const player = this.players[pId];
+        
+        // 1. On le marque HORS LIGNE (mais on ne le supprime pas de this.players)
+        player.online = false; 
+        
+        // 2. On sauvegarde une copie (au cas où, pour ta logique existante)
+        this.disconnectedPlayers[pId] = player;
+        
+        // 3. On coupe le lien socket
+        delete this.sockets[socketId];
+
+        console.log(`[${this.code}] ${player.name} passé en mode HORS LIGNE.`);
+
+        // 4. IMPORTANT : On vérifie si le jeu peut continuer sans lui !
+        if (this.state === 'DRAFT') this.checkAllSelected();
+        if (this.state === 'PLACEMENT') this.checkAllPlaced();
+        if (this.state === 'RUN') this.checkEndRoundCondition();
     }
 
     handlePlayerDeath(playerId, posData) {

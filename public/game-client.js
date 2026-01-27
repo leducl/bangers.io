@@ -50,6 +50,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         scene.add.existing(this);
         scene.physics.add.existing(this);
         
+        this.myOriginalColor = color;
+
         this.setTint(color);
         this.setCollideWorldBounds(true);
         this.setScale(0.8);
@@ -239,6 +241,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.hasFinished = false;
         this.setAlpha(1);
         this.clearTint();
+        this.setTint(this.myOriginalColor);
         
         if (this.body) {
             this.body.checkCollision.none = false;
@@ -493,30 +496,38 @@ function updateIngameScoreboard() {
     });
 
     let html = '';
+    
+    // C'EST ICI QUE LA BOUCLE COMMENCE
     players.forEach(p => {
-        // --- LOGIQUE MODIFIÉE ---
+        // --- CORRECTION : Ces lignes doivent être DANS la boucle ---
+        // On vérifie p.online. Si undefined, on considère true par défaut pour éviter le gris permanent
+        const isOnline = (p.online !== false); 
+        const opacity = isOnline ? 1 : 0.5; 
+        const nameDisplay = isOnline ? p.playerName : p.playerName + " (Déco)";
+        
+        // --- LOGIQUE STATUS ---
         let status = '';
         
         if (p.hasFinished) {
-            status = '🏁'; // Drapeau si fini (prioritaire)
+            status = '🏁'; 
         } 
         else if (p.isDead && roomConfig.mode === 'perma') {
-            status = '💀'; // Crâne UNIQUEMENT si mort ET mode Mort Subite
+            status = '💀'; 
         }
-        // En mode respawn classique, on n'affiche rien quand le joueur meurt (car il va revivre)
         
         const colorHex = '#' + p.tintTopLeft.toString(16).padStart(6, '0');
         
         html += `
-            <div class="sb-row">
+            <div class="sb-row" style="opacity: ${opacity}">
                 <div style="display:flex; align-items:center;">
                     <span class="sb-color" style="background:${colorHex}"></span>
-                    <span>${p.playerName}</span>
+                    <span>${nameDisplay}</span>
                 </div>
                 <span class="sb-status">${status}</span>
             </div>
         `;
     });
+    
     container.innerHTML = html;
 }
 
@@ -773,7 +784,11 @@ function handleStateChange(data) {
     const scene = game.scene.getScene('MainScene'); 
     // Petite astuce : si MainScene n'est pas trouvé via getScene, on utilise la globale game
     const activeScene = scene || game.scene.scenes[0];
-    const isSceneReady = activeScene && activeScene.sys && activeScene.sys.settings.active;
+    const isSceneReady = activeScene && activeScene.sys && activeScene.sys.settings.active && solidGroup;
+
+    if (data.roomConfig) {
+        roomConfig = data.roomConfig;
+    }
 
     document.getElementById('phase-display').innerText = currentPhase;
     document.getElementById('draft-menu').style.display = 'none';
@@ -813,10 +828,6 @@ function handleStateChange(data) {
             if(data.options && myPlayerId && data.options[myPlayerId]) {
                 renderDraftCards(data.options[myPlayerId]);
             }
-            if (data.roomConfig) {
-                roomConfig = data.roomConfig;
-            }
-
             break;
 
         case 'PLACEMENT':
@@ -835,7 +846,17 @@ function handleStateChange(data) {
             if(ghostItem) { ghostItem.destroy(); ghostItem = null; }
             if(markerGraphics) markerGraphics.setVisible(false);
             if (previousPhase !== 'RUN') {
-                if(playerMap[myPlayerId]) playerMap[myPlayerId].respawn();
+                Object.values(playerMap).forEach(p => {
+                    p.respawn();
+                });
+            }
+
+            // Si je me reconnecte et que je ne suis pas encore sur la map
+            if (myPlayerId && (!playerMap[myPlayerId] || !playerMap[myPlayerId].visible)) {
+                // On attend un petit peu que syncPlayers ait fait son travail
+                setTimeout(() => {
+                   if(playerMap[myPlayerId]) playerMap[myPlayerId].respawn();
+                }, 100);
             }
 
             updateIngameScoreboard();
@@ -852,15 +873,33 @@ function handleStateChange(data) {
 
 function syncPlayers(scene, playersData) {
     const localName = localStorage.getItem('np_username');
+    
     Object.values(playersData).forEach(pData => {
         if(pData.name === localName) myPlayerId = pData.id;
         
-        if(!playerMap[pData.id]) {
-            // PASSAGE DU NOM ICI
-            playerMap[pData.id] = new Player(scene, 50, 500, pData.color, pData.id, pData.name);
-        } else {
-            // Si le joueur existe, on met à jour son état (utile pour les reconnexions)
-            playerMap[pData.id].hasFinished = pData.hasFinished || false;
+        let p = playerMap[pData.id];
+
+        if(!p) {
+            // Création du joueur s'il n'existe pas
+            p = new Player(scene, 50, 500, pData.color, pData.id, pData.name);
+            playerMap[pData.id] = p;
+        } 
+        
+        // --- MISE A JOUR DES DONNÉES (Fix des bugs d'affichage) ---
+        p.hasFinished = pData.hasFinished || false;
+        
+        // On met à jour le statut en ligne/hors ligne reçu du serveur
+        p.online = pData.online; 
+        
+
+        // Si le serveur dit que je suis mort, je dois appliquer la mort
+        // même si c'est "moi" (cas de la reconnexion)
+        if (pData.isDead && !p.isDead) {
+            p.die(); // Applique l'effet visuel et bloque les mouvements
+        }
+        // Si le serveur dit vivant (ex: respawn), on réinitialise
+        else if (!pData.isDead && p.isDead) {
+             p.respawn();
         }
     });
 }
