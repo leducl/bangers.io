@@ -36,7 +36,7 @@ const CONFIG = {
         default: 'arcade', 
         arcade: { 
             gravity: { y: 1200 }, 
-            debug: true 
+            debug: false 
         } 
     },
     scene: { preload, create, update }
@@ -824,4 +824,5 @@ function optimizeWalls() {
 window.onload = () => {
     game = new Phaser.Game(CONFIG);
 };
+
 
