@@ -240,6 +240,14 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('voteSkip', () => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (room) {
+            const pId = room.sockets[socket.id];
+            room.handleSkipVote(pId); // On délègue à GameRoom
+        }
+    });
+
     socket.on('triggerBomb', (itemId) => {
         const room = Object.values(rooms).find(r => r.sockets[socket.id]);
         if (!room || room.state !== 'RUN') return;
@@ -268,6 +276,8 @@ io.on('connection', (socket) => {
     });
 
 });
+
+
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log('>> NetParty Server v2 running'));

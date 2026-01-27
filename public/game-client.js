@@ -387,6 +387,13 @@ function create() {
 
     this.input.mouse.disableContextMenu();
 
+    this.input.keyboard.on('keydown-N', () => {
+        // On n'envoie le signal que si on est en phase RUN
+        if (currentPhase === 'RUN') {
+            socket.emit('voteSkip');
+        }
+    });
+
     this.input.on('pointerdown', (pointer) => {
         if(currentPhase === 'PLACEMENT' && mySelection && !hasPlacedItem) {
             
@@ -631,6 +638,27 @@ window.startGameClient = function(roomCode, playerName) {
         if(display) display.innerText = formatTime(time);
     });
 
+    socket.on('voteUpdate', (data) => {
+        const div = document.getElementById('vote-display');
+        if (div) {
+            if (data.required === 0 || data.current === 0) {
+                div.style.display = 'none';
+                return;
+            }
+
+            // Sinon (il y a au moins 1 vote), on affiche
+            div.style.display = 'block';
+            div.innerText = `VOTE SKIP : ${data.current}/${data.required} (Appuie sur N)`;
+            
+            if(data.current >= data.required && data.required > 0) {
+                div.style.color = '#00ff00';
+                div.innerText = "SKIP VALIDÉ !";
+            } else {
+                div.style.color = '#ffeb3b';
+            }
+        }
+    });
+
     socket.on('gameState', (data) => handleStateChange(data));
 
 
@@ -794,6 +822,8 @@ function handleStateChange(data) {
     document.getElementById('draft-menu').style.display = 'none';
     document.getElementById('scoreboard').style.display = 'none';
 
+    const voteDiv = document.getElementById('vote-display');
+    if (voteDiv) voteDiv.style.display = 'none';
 
     // --- AJOUT : Gérer la visibilité du petit scoreboard ---
     const ingameBoard = document.getElementById('ingame-scoreboard');

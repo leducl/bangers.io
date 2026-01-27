@@ -29,7 +29,7 @@ class GameRoom {
         
         this.timerValue = 0;
         this.timerInterval = null;
-
+        this.skipVotes = new Set();
         this.draftOptions = {};
     }
 
@@ -213,7 +213,7 @@ class GameRoom {
     startRunPhase() {
         this.state = 'RUN';
         this.stopTimer();
-        
+        this.skipVotes.clear();
         // Reset des états de mort pour le nouveau round
         for(let pId in this.players) {
             this.players[pId].isDead = false; 
@@ -347,6 +347,9 @@ class GameRoom {
         if (p && !p.hasFinished) {
             p.hasFinished = true;
             
+            this.broadcast('voteUpdate', { current: 0, required: 0 }); // Cache l'UI coté client
+            this.skipVotes.clear(); // Reset logique
+
             // Calcul des points (Bonus pour le premier)
             const finishers = Object.values(this.players).filter(pl => pl.hasFinished).length;
             const points = finishers === 1 ? 3 : 1;
@@ -381,6 +384,30 @@ class GameRoom {
         if (this.state === 'DRAFT') this.checkAllSelected();
         if (this.state === 'PLACEMENT') this.checkAllPlaced();
         if (this.state === 'RUN') this.checkEndRoundCondition();
+
+
+        if (this.state === 'RUN') {
+            const onlinePlayers = Object.values(this.players).filter(p => p.online);
+            
+            // On nettoie les votes des joueurs partis (au cas où ils reviennent)
+            // Ou on laisse, ça ne change rien car on compare currentVotes vs onlinePlayers.length
+            
+            // Vérification si le skip doit se déclencher maintenant
+            if (this.skipVotes.size >= onlinePlayers.length && onlinePlayers.length > 0) {
+                 // On vérifie quand même que personne n'a fini avant de skip
+                 const anyoneFinished = Object.values(this.players).some(p => p.hasFinished);
+                 if (!anyoneFinished) {
+                     this.startScorePhase();
+                     return;
+                 }
+            } else {
+                // Mise à jour de l'UI (le total requis a baissé)
+                this.broadcast('voteUpdate', { 
+                    current: this.skipVotes.size, 
+                    required: onlinePlayers.length 
+                });
+            }
+        }
     }
 
     handlePlayerDeath(playerId, posData) {
@@ -404,6 +431,32 @@ class GameRoom {
 
             // vérification de fin de manche y
             this.checkEndRoundCondition();
+        }
+    }
+
+    handleSkipVote(playerId) {
+        // 1. Vérifier qu'on est en RUN
+        if (this.state !== 'RUN') return;
+
+        // 2. Vérifier si un joueur a DÉJÀ fini (Condition stricte demandée)
+        const anyoneFinished = Object.values(this.players).some(p => p.hasFinished);
+        if (anyoneFinished) return; // Vote désactivé si quelqu'un a passé la ligne
+
+        // 3. Enregistrer le vote
+        this.skipVotes.add(playerId);
+
+        // 4. Calculer le ratio
+        const onlinePlayers = Object.values(this.players).filter(p => p.online);
+        const requiredVotes = onlinePlayers.length;
+        const currentVotes = this.skipVotes.size;
+
+        // 5. Diffuser l'état aux clients (pour l'UI)
+        this.broadcast('voteUpdate', { current: currentVotes, required: requiredVotes });
+
+        // 6. Si tout le monde a voté -> FIN DU ROUND
+        if (currentVotes >= requiredVotes && requiredVotes > 0) {
+            console.log(`[${this.code}] Vote Skip validé (${currentVotes}/${requiredVotes})`);
+            this.startScorePhase();
         }
     }
 }
