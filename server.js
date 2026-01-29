@@ -1,5 +1,6 @@
 const Room = require('./server/core/Room.js'); 
 const BangersGame = require('./server/games/bangers/BangersGame.js');
+const LiarsGame = require('./server/games/liars/LiarsGame.js'); 
 
 const express = require('express');
 const http = require('http');
@@ -34,7 +35,10 @@ function getPublicRooms() {
 const GAME_EVENTS = [
     'selectItem', 'tryPlaceItem', 'playerMove', 
     'reachedGoal', 'reportDeath', 'playerRespawn', 'voteSkip', 
-    'triggerBomb', 'triggerNuke'
+    'triggerBomb', 'triggerNuke',
+
+    //Liars BAR
+    'playCards', 'callLiar', 'passTurn'
 ];
 
 io.on('connection', (socket) => {
@@ -75,9 +79,25 @@ io.on('connection', (socket) => {
 
     socket.on('hub_launchGame', (data) => {
         const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+
         if (room && room.isHost(socket.id)) {
+            console.log(`Lancement du jeu : ${data.gameId}`);
+
+            // SI C'EST BANGERS
             if (data.gameId === 'bangers') {
-                room.startGame(BangersGame, { ...room.config, ...data.options, allMaps: MAPS });
+                room.startGame(BangersGame, { 
+                    ...room.config, 
+                    ...data.options, 
+                    allMaps: MAPS // Bangers a besoin des maps
+                });
+            } 
+            // SI C'EST LIARS BAR
+            else if (data.gameId === 'liars') {
+                room.startGame(LiarsGame, { 
+                    ...room.config, 
+                    ...data.options 
+                    // Liars n'a pas besoin de 'allMaps'
+                });
             }
         }
     });

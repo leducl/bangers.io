@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Liar's Bar - NetParty</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { margin: 0; background: #1a0505; color: white; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        
+        #game-ui { display: flex; flex-direction: column; height: 100vh; align-items: center; justify-content: space-between; padding: 20px; box-sizing: border-box; }
+        
+        /* ANNONCE DU DECK */
+        #deck-info {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;
+            font-size: 14px; color: #ccc;
+            border-left: 3px solid #e91e63;
+        }
+
+        /* NOTIFICATION DE TOUR */
+        #turn-notification {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            
+            /* MODIFICATION ICI : Taille responsive (min 30px, max 70px) */
+            font-size: clamp(30px, 8vw, 70px); 
+            
+            font-weight: 900; color: #ffd700;
+            text-shadow: 0 0 30px rgba(0,0,0,0.8), 0 0 10px #ff9800;
+            pointer-events: none;
+            display: none; z-index: 10000;
+            text-transform: uppercase;
+            animation: pulse-text 0.5s infinite alternate;
+            text-align: center;
+        }
+
+        @keyframes pulse-text { 
+            from { transform: translate(-50%, -50%) scale(1); } 
+            to { transform: translate(-50%, -50%) scale(1.1); } 
+        }
+
+        /* TABLE CENTRALE */
+        #table-area { 
+            flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            width: 100%; position: relative;
+        }
+        
+        .table-info { 
+            background: rgba(0,0,0,0.6); padding: 15px 30px; border-radius: 10px; border: 2px solid #555;
+            text-align: center; margin-bottom: 20px;
+        }
+        #target-card { font-size: 40px; color: #ffd700; font-weight: bold; }
+        #stack-display { font-size: 18px; color: #aaa; margin-top: 5px; }
+        
+        #last-action { height: 30px; color: #ff9800; font-weight: bold; margin-bottom: 10px; }
+
+        /* JOUEURS */
+        #players-container { display: flex; gap: 20px; justify-content: center; width: 100%; flex-wrap: wrap; margin-bottom: 20px; }
+        .player-card {
+            background: #2a1a1a; padding: 10px; border-radius: 8px; width: 120px; text-align: center;
+            border: 2px solid transparent; opacity: 0.7; transition: 0.3s;
+        }
+        .player-card.active { border-color: #ffd700; opacity: 1; transform: scale(1.05); box-shadow: 0 0 15px #ffd700; }
+        .player-card.dead { filter: grayscale(1); opacity: 0.3; }
+        .player-avatar { width: 40px; height: 40px; border-radius: 50%; margin: 0 auto 5px; background: #555; }
+        .bullets { font-size: 12px; color: #ff5252; margin-top: 5px; }
+
+        /* MAIN DU JOUEUR */
+        #my-hand { 
+            display: flex; gap: 10px; justify-content: center; height: 160px; align-items: flex-end; 
+            margin-bottom: 20px;
+        }
+        .card {
+            width: 90px; height: 130px; background: white; border-radius: 8px; color: black;
+            display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: bold;
+            cursor: pointer; transition: 0.2s; border: 3px solid #ccc; position: relative;
+            user-select: none;
+        }
+        .card:hover { transform: translateY(-20px); }
+        .card.selected { border-color: #4caf50; transform: translateY(-30px); box-shadow: 0 0 15px #4caf50; }
+        .card.red { color: #d32f2f; }
+        .card.black { color: #212121; }
+        .card.joker { background: #e0f7fa; color: #006064; }
+
+        /* ACTIONS */
+        #action-bar { display: flex; gap: 20px; height: 60px; }
+        button {
+            padding: 10px 30px; font-size: 18px; font-weight: bold; border: none; border-radius: 5px;
+            cursor: pointer; text-transform: uppercase;
+            transition: all 0.2s;
+        }
+        button:disabled { background: #444 !important; color: #777 !important; cursor: not-allowed; opacity: 0.5 !important; }
+        #btn-play { background: #4caf50; color: white; }
+        #btn-liar { background: #f44336; color: white; }
+
+        /* OVERLAY RESULTAT */
+        #overlay {
+            position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85);
+            display:none; flex-direction:column; align-items:center; justify-content:center; z-index:100;
+        }
+        #overlay h1 { font-size: 60px; margin: 0; }
+        #overlay-cards { display:flex; gap:10px; margin: 30px 0; }
+
+        /* ANIMATION CARTES VOLANTES */
+        .flying-card {
+            position: fixed;
+            width: 60px; height: 90px;
+            background: repeating-linear-gradient(45deg, #b71c1c, #b71c1c 10px, #8e0000 10px, #8e0000 20px);
+            border: 2px solid #fff; border-radius: 6px;
+            z-index: 9999;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            /* Transition lente pour bien voir le mouvement */
+            transition: all 1.2s cubic-bezier(0.22, 1, 0.36, 1); 
+            pointer-events: none;
+        }
+
+        /* === ANIMATION RETOURNEMENT DE CARTES (SHOWDOWN) === */
+        
+        /* Le conteneur de la carte qui définit la perspective 3D */
+        .flip-card {
+            background-color: transparent;
+            width: 90px; height: 130px;
+            perspective: 1000px; /* Donne de la profondeur */
+            margin: 0 5px;
+        }
+
+        /* Le conteneur interne qui va faire la rotation */
+        .flip-card-inner {
+            position: relative;
+            width: 100%; height: 100%;
+            text-align: center;
+            transition: transform 0.8s; /* Vitesse du retournement (lent pour le suspense) */
+            transform-style: preserve-3d;
+        }
+
+        /* La classe ajoutée en JS pour déclencher le retournement */
+        .flip-card.flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+
+        /* Styles communs aux deux faces */
+        .flip-card-front, .flip-card-back {
+            position: absolute;
+            width: 100%; height: 100%;
+            -webkit-backface-visibility: hidden; /* Cache la face arrière pendant la rotation */
+            backface-visibility: hidden;
+            border-radius: 8px;
+            border: 3px solid #ccc;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 32px; font-weight: bold;
+        }
+
+        /* Le Dos (visible au début) */
+        .flip-card-back {
+            /* Même style que les cartes volantes */
+            background: repeating-linear-gradient(45deg, #b71c1c, #b71c1c 10px, #8e0000 10px, #8e0000 20px);
+            color: transparent;
+            border: 2px solid #fff;
+        }
+
+        /* La Face (révélée après rotation) */
+        /* On réutilise les classes .card .red etc. dans le JS pour le style du contenu */
+        .flip-card-front {
+            background-color: white;
+            color: black;
+            transform: rotateY(180deg); /* Initialement retournée à l'envers */
+        }
+        /* ================================================== */
+        /* === ANIMATION ROULETTE RUSSE (BARILLET) === */
+        #roulette-container {
+            position: relative;
+            width: 150px; height: 150px;
+            margin-bottom: 30px;
+            display: none; /* Caché par défaut */
+        }
+
+        .cylinder {
+            width: 100%; height: 100%;
+            border-radius: 50%;
+            background: #444;
+            border: 5px solid #222;
+            position: relative;
+            box-shadow: inset 0 0 20px #000;
+            transition: transform 3s cubic-bezier(0.1, 0, 0.2, 1); /* Rotation qui décélère */
+        }
+
+        /* Les 6 chambres du barillet */
+        .chamber {
+            position: absolute;
+            width: 35px; height: 35px;
+            background: #111;
+            border-radius: 50%;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: inset 2px 2px 5px rgba(0,0,0,0.8);
+        }
+        /* Positionnement circulaire des 6 trous */
+        .chamber:nth-child(1) { transform: translate(-50%, -150%); } /* Haut */
+        .chamber:nth-child(2) { transform: translate(40%, -100%); }  /* Haut Droite */
+        .chamber:nth-child(3) { transform: translate(40%, 0%); }     /* Bas Droite */
+        .chamber:nth-child(4) { transform: translate(-50%, 50%); }   /* Bas */
+        .chamber:nth-child(5) { transform: translate(-140%, 0%); }   /* Bas Gauche */
+        .chamber:nth-child(6) { transform: translate(-140%, -100%); } /* Haut Gauche */
+
+        /* Effet de recul quand on tire */
+        .recoil-anim { animation: recoil 0.2s ease-out; }
+        @keyframes recoil {
+            0% { transform: scale(1); }
+            10% { transform: scale(0.9) rotate(5deg); }
+            100% { transform: scale(1) rotate(0deg); }
+        }
+
+        /* Flash blanc lors du tir mortel */
+        .muzzle-flash {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: white;
+            opacity: 0; pointer-events: none; z-index: 20000;
+        }
+        .flash-anim { animation: flash 0.5s ease-out; }
+        @keyframes flash {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        /* === ROULETTE QUI COMMENCE === */
+        #roulette-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 15000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #roulette-overlay h2 {
+            font-size: 40px; color: white; margin-bottom: 30px; letter-spacing: 5px;
+        }
+        #roulette-box {
+            width: 80%; max-width: 500px;
+            background: #222;
+            border: 4px solid #e91e63;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 0 50px rgba(233, 30, 99, 0.5);
+            transform: scale(1);
+            transition: transform 0.2s;
+        }
+        #roulette-name {
+            font-size: 60px; font-weight: bold; color: white;
+            text-transform: uppercase;
+            text-shadow: 2px 2px 0 #000;
+        }
+        /* Animation de pulsation quand le gagnant est trouvé */
+        .winner-pulse {
+            animation: winPulse 0.5s infinite alternate;
+            border-color: #ffd700 !important;
+            box-shadow: 0 0 60px #ffd700 !important;
+        }
+        @keyframes winPulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+
+        /* LA PIOCHE SUR LA TABLE */
+        #deck-pile {
+            position: absolute;
+            left: 40px; /* À gauche de la zone centrale */
+            top: 50%;
+            transform: translateY(-50%);
+            width: 90px; height: 130px;
+            /* Style dos de carte */
+            background: repeating-linear-gradient(45deg, #b71c1c, #b71c1c 10px, #8e0000 10px, #8e0000 20px);
+            border: 2px solid #fff;
+            border-radius: 8px;
+            /* Effet d'épaisseur (plusieurs ombres) */
+            box-shadow: 
+                1px 1px 0 #550000,
+                2px 2px 0 #550000,
+                3px 3px 0 #550000,
+                4px 4px 0 #550000,
+                5px 5px 10px rgba(0,0,0,0.5);
+            z-index: 5;
+        }
+
+        @keyframes popIn {
+            from { transform: scale(0); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="deck-info">Chargement du deck...</div>
+    
+    <div id="turn-notification">À TOI DE JOUER !</div>
+
+    <div id="game-ui">
+        <div id="players-container"></div>
+
+        <div id="table-area">
+            <div id="deck-pile"></div> 
+            
+            <div id="last-action"></div>
+            <div class="table-info">
+                <div>VALEUR REQUISE</div>
+                <div id="target-card">?</div>
+                <div id="stack-display">Cartes sur la table : 0</div>
+            </div>
+        </div>
+
+        <div id="my-hand"></div>
+
+        <div id="action-bar">
+            <button id="btn-liar" onclick="callLiar()" disabled>MENTEUR !</button>
+            <button id="btn-play" onclick="playCards()" disabled>JOUER SÉLECTION</button>
+            <button id="btn-pass" onclick="passTurn()" disabled style="background:#555; margin-left:10px;">PASSER</button>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <div id="roulette-container">
+            <div class="cylinder" id="cylinder-visual">
+                <div class="chamber"></div>
+                <div class="chamber"></div>
+                <div class="chamber"></div>
+                <div class="chamber"></div>
+                <div class="chamber"></div>
+                <div class="chamber"></div>
+            </div>
+        </div>
+        <h1 id="overlay-title">SHOWDOWN</h1>
+        <div id="overlay-msg" style="font-size:24px; color:#aaa;"></div>
+        <div id="overlay-cards"></div>
+    </div>
+    
+    <div id="global-flash" class="muzzle-flash"></div>
+
+    <div id="roulette-overlay" style="display:none;">
+        <h2>QUI COMMENCE ?</h2>
+        <div id="roulette-box">
+            <div id="roulette-name">???</div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const params = new URLSearchParams(window.location.search);
+        const roomCode = params.get('room');
+        const myName = localStorage.getItem('np_username');
+
+        let myHand = [];
+        let selectedIndices = [];
+        let isMyTurn = false;
+        let canChallenge = false;
+        let hasForceRequested = false;
+        let allPlayers = {};
+        let controlsLocked = false; 
+        let isDealing = false;
+
+        if(!roomCode || !myName) window.location.href = '/';
+
+        // --- SOCKET LISTENERS ---
+
+        socket.on('connect', () => {
+            socket.emit('joinGamePhase', { code: roomCode, name: myName });
+        });
+
+        socket.on('gameState', (data) => renderGame(data));
+
+        socket.on('handUpdate', (cards) => {
+                myHand = cards;
+                selectedIndices = [];
+                hasForceRequested = false;
+                
+                // SI on est en pleine animation de distribution, on NE DESSINE PAS tout de suite.
+                // C'est l'animation qui va faire apparaître les cartes une par une.
+                if (!isDealing) {
+                    renderHand();
+                }
+            });
+
+        socket.on('deckAnnouncement', (comp) => {
+            let txt = "<b>CONTENU DU DECK :</b><br>";
+            if(comp.K) txt += `Rois (K) : ${comp.K}<br>`;
+            if(comp.Q) txt += `Dames (Q) : ${comp.Q}<br>`;
+            if(comp.A) txt += `As (A) : ${comp.A}<br>`;
+            if(comp.JOKER) txt += `Jokers : ${comp.JOKER}`;
+            document.getElementById('deck-info').innerHTML = txt;
+        });
+
+        socket.on('infoMessage', (msg) => {
+            document.getElementById('last-action').innerText = msg;
+        });
+
+        socket.on('showdown', (data) => {
+            const overlay = document.getElementById('overlay');
+            const title = document.getElementById('overlay-title');
+            const msg = document.getElementById('overlay-msg');
+            const cardsDiv = document.getElementById('overlay-cards');
+
+            // 1. Préparer l'overlay
+            overlay.style.display = 'flex';
+            cardsDiv.innerHTML = '';
+            
+            // On CACHE le résultat au début
+            title.style.visibility = 'hidden';
+            msg.style.visibility = 'hidden';
+
+            // 2. Créer les structures 3D pour chaque carte
+            data.cards.forEach((val, index) => {
+                const flipContainer = document.createElement('div');
+                flipContainer.className = 'flip-card';
+
+                const inner = document.createElement('div');
+                inner.className = 'flip-card-inner';
+
+                const back = document.createElement('div');
+                back.className = 'flip-card-back';
+
+                const front = document.createElement('div');
+                front.className = 'flip-card-front card'; 
+                
+                // --- CORRECTION ICI : On utilise bien 'val' partout ---
+                if (val === 'Q') { front.innerText = 'Q'; front.classList.add('red'); }
+                else if (val === 'K') { front.innerText = 'K'; front.classList.add('black'); }
+                else if (val === 'A') { front.innerText = 'A'; front.classList.add('red'); } // C'était "value" ici avant !
+                else if (val === 'JOKER') { front.innerText = '🤡'; front.classList.add('joker'); }
+
+                inner.appendChild(back);
+                inner.appendChild(front);
+                flipContainer.appendChild(inner);
+                cardsDiv.appendChild(flipContainer);
+
+                // 3. Programmer le retournement
+                setTimeout(() => {
+                    flipContainer.classList.add('flipped');
+                }, index * 1000 + 500);
+            });
+
+            // 4. Afficher le résultat final
+            const totalAnimationTime = (data.cards.length * 1000) + 1500;
+            
+            setTimeout(() => {
+                title.style.visibility = 'visible';
+                msg.style.visibility = 'visible';
+
+                if (data.liar) {
+                    title.innerText = "MENSONGE !";
+                    title.style.color = "#f44336";
+                    msg.innerText = "C'était bien du bluff.";
+                } else {
+                    title.innerText = "VÉRITÉ !";
+                    title.style.color = "#4caf50";
+                    msg.innerText = "Les cartes étaient bonnes.";
+                }
+            }, totalAnimationTime);
+        });
+
+        socket.on('gunshot', (data) => {
+            const overlay = document.getElementById('overlay');
+            const title = document.getElementById('overlay-title');
+            const msg = document.getElementById('overlay-msg');
+            const cardsDiv = document.getElementById('overlay-cards');
+            const rouletteContainer = document.getElementById('roulette-container');
+            const cylinder = document.getElementById('cylinder-visual');
+            const flash = document.getElementById('global-flash');
+
+            // 1. Préparer l'écran
+            overlay.style.display = 'flex';
+            cardsDiv.innerHTML = ""; 
+            title.innerText = "";
+            msg.innerText = "";
+            
+            rouletteContainer.style.display = 'block';
+            
+            cylinder.style.transition = 'none';
+            cylinder.style.transform = 'rotate(0deg)';
+            
+            cylinder.getBoundingClientRect(); 
+
+            // 2. LANCER LA ROTATION
+            const randomRot = 1440 + Math.floor(Math.random() * 360);
+            
+            cylinder.style.transition = 'transform 3s cubic-bezier(0.1, 0, 0.2, 1)';
+            cylinder.style.transform = `rotate(${randomRot}deg)`;
+
+            // 3. MOMENT DU TIR
+            setTimeout(() => {
+                rouletteContainer.classList.add('recoil-anim');
+                setTimeout(() => rouletteContainer.classList.remove('recoil-anim'), 200);
+
+                // --- RÉCUPÉRATION DU NOM DU JOUEUR CIBLÉ ---
+                const targetName = allPlayers[data.target] ? allPlayers[data.target].name : "Le joueur";
+
+                if (data.status === 'DEAD') {
+                    // --- MORT ---
+                    flash.classList.add('flash-anim');
+                    setTimeout(() => flash.classList.remove('flash-anim'), 500);
+
+                    document.body.style.transform = "translate(10px, 10px)";
+                    setTimeout(() => document.body.style.transform = "translate(-10px, -10px)", 50);
+                    setTimeout(() => document.body.style.transform = "none", 100);
+
+                    title.innerText = "💥💀";
+                    title.style.color = "red";
+                    msg.innerText = `${targetName} a été éliminé`; // <--- NOM AFFICHÉ
+
+                } else {
+                    // --- SURVIE ---
+                    title.innerText = "❤️";
+                    title.style.color = "#4caf50"; 
+                    msg.innerText = `${targetName} reste en vie`; // <--- NOM AFFICHÉ
+                }
+
+                // 4. Fin
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    rouletteContainer.style.display = 'none';
+                }, 3000);
+
+            }, 3000); 
+        });
+
+
+        // Écouteur du signal d'animation
+        socket.on('playAnimation', (data) => {
+            triggerThrowAnimation(data.playerId, data.count);
+        });
+
+        function triggerThrowAnimation(playerId, count) {
+            // 1. On VERROUILLE tout dès que l'animation commence
+            controlsLocked = true;
+            updateButtons(); 
+
+            let startX, startY;
+            const playerEl = document.getElementById(`player-pos-${playerId}`);
+            const isMe = (playerEl && playerEl.innerText.includes(myName)); 
+
+            if (isMe) {
+                startX = window.innerWidth / 2;
+                startY = window.innerHeight - 100;
+            } else if (playerEl) {
+                const rect = playerEl.getBoundingClientRect();
+                startX = rect.left + rect.width / 2;
+                startY = rect.top + rect.height / 2;
+            } else {
+                return; 
+            }
+
+            const tableEl = document.getElementById('stack-display');
+            const tableRect = tableEl.getBoundingClientRect();
+            const endX = tableRect.left + tableRect.width / 2;
+            const endY = tableRect.top + tableRect.height / 2;
+
+            const staggerDelay = 250; 
+            const flightTime = 1200;
+
+            // --- CORRECTION DU CALCUL DU TEMPS ---
+            // On prend le départ de la DERNIÈRE carte (count - 1) + son temps de vol
+            // Si count est 1, (0 * 250) + 1200 = 1200ms (Exactement la fin du vol)
+            const safeCount = count > 0 ? count : 1;
+            const totalAnimationTime = ((safeCount - 1) * staggerDelay) + flightTime;
+
+            for (let i = 0; i < count; i++) {
+                setTimeout(() => {
+                    const card = document.createElement('div');
+                    card.className = 'flying-card';
+                    document.body.appendChild(card);
+
+                    card.style.left = (startX - 30) + 'px'; 
+                    card.style.top = (startY - 45) + 'px';  
+                    
+                    const rot = (Math.random() - 0.5) * 40;
+                    card.style.transform = `scale(0.5) rotate(${rot}deg)`;
+
+                    card.getBoundingClientRect(); 
+
+                    const randomX = (Math.random() - 0.5) * 30;
+                    const randomY = (Math.random() - 0.5) * 30;
+                    
+                    card.style.left = (endX - 30 + randomX) + 'px';
+                    card.style.top = (endY - 45 + randomY) + 'px';
+                    card.style.transform = `scale(1) rotate(${Math.random() * 360}deg)`; 
+                    card.style.opacity = 0; 
+
+                    setTimeout(() => {
+                        card.remove();
+                    }, flightTime); 
+
+                }, i * staggerDelay); 
+            }
+
+            // --- FIN DE L'ANIMATION : Séquence de déblocage ---
+            setTimeout(() => {
+                if (isMyTurn) {
+                    const notif = document.getElementById('turn-notification');
+                    notif.style.display = 'block';
+
+                    setTimeout(() => {
+                        notif.style.display = 'none';
+                        controlsLocked = false;
+                        updateButtons();
+                    }, 1500);
+
+                } else {
+                    controlsLocked = false;
+                    updateButtons();
+                }
+            }, totalAnimationTime);
+        }
+        
+        socket.on('forceRedirect', (url) => window.location.href = url);
+
+        // --- RENDERING ---
+
+        function renderGame(state) {
+            allPlayers = state.players;
+
+            document.getElementById('target-card').innerText = state.tableValue || "?";
+            document.getElementById('stack-display').innerText = `Cartes au centre : ${state.stackCount}`;
+            
+            const lastActionDiv = document.getElementById('last-action');
+            if (state.lastPlay) {
+                lastActionDiv.innerText = `${state.lastPlay.name} a joué ${state.lastPlay.count} carte(s)`;
+                canChallenge = true;
+            } else {
+                lastActionDiv.innerText = "Nouvelle manche";
+                canChallenge = false;
+            }
+
+            if (state.state === 'GAME_OVER') {
+                lastActionDiv.innerText = "PARTIE TERMINÉE !";
+                return;
+            }
+
+            const me = Object.values(state.players).find(p => p.name === myName);
+            if (state.state === 'PLAYING' && myHand.length === 0 && me && !me.isDead && !hasForceRequested) {
+                hasForceRequested = true; 
+                socket.emit('joinGamePhase', { code: roomCode, name: myName });
+            }
+
+            const container = document.getElementById('players-container');
+            container.innerHTML = "";
+            
+            Object.values(state.players).forEach(p => {
+                const isMe = (p.name === myName);
+                if (isMe) {
+                    isMyTurn = p.isMyTurn;
+                    updateButtons();
+                }
+
+                const div = document.createElement('div');
+                div.id = `player-pos-${p.id}`; 
+                div.className = `player-card ${p.isMyTurn ? 'active' : ''} ${p.isDead ? 'dead' : ''}`;
+                const colorHex = '#' + p.color.toString(16).padStart(6, '0');
+                
+                div.innerHTML = `
+                    <div class="player-avatar" style="background:${colorHex}"></div>
+                    <div style="font-weight:bold">${p.name}</div>
+                    <div style="font-size:12px; margin-top:5px;">🤚 ${p.cardCount} cartes</div>
+                    <div class="bullets">${'💀'.repeat(p.bullets)}</div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderHand() {
+            const handDiv = document.getElementById('my-hand');
+            handDiv.innerHTML = "";
+            myHand.forEach((cardVal, index) => {
+                const el = createCardElement(cardVal, true);
+                el.onclick = () => toggleSelectCard(index, el);
+                handDiv.appendChild(el);
+            });
+            updateButtons();
+        }
+
+        function createCardElement(value, interact) {
+            const div = document.createElement('div');
+            div.className = 'card';
+            if (value === 'Q') { div.innerText = 'Q'; div.classList.add('red'); }
+            else if (value === 'K') { div.innerText = 'K'; div.classList.add('black'); }
+            else if (value === 'A') { div.innerText = 'A'; div.classList.add('red'); }
+            else if (value === 'JOKER') { div.innerText = '🤡'; div.classList.add('joker'); }
+            return div;
+        }
+
+        function toggleSelectCard(index, element) {
+            if (!isMyTurn || controlsLocked) return; // Bloqué si animation en cours
+            
+            const pos = selectedIndices.indexOf(index);
+            if (pos === -1) {
+                if(selectedIndices.length < 3) {
+                    selectedIndices.push(index);
+                    element.classList.add('selected');
+                }
+            } else {
+                selectedIndices.splice(pos, 1);
+                element.classList.remove('selected');
+            }
+            updateButtons();
+        }
+
+        function updateButtons() {
+            const btnPlay = document.getElementById('btn-play');
+            const btnLiar = document.getElementById('btn-liar');
+            const btnPass = document.getElementById('btn-pass');
+
+            // --- VERROUILLAGE GLOBAL ---
+            // Si les contrôles sont bloqués, on désactive tout
+            if (controlsLocked) {
+                btnPlay.disabled = true; btnPlay.style.opacity = 0.5;
+                btnLiar.disabled = true; btnLiar.style.opacity = 0.5;
+                btnPass.disabled = true; btnPass.style.opacity = 0.5;
+                return;
+            }
+
+            // Sinon, logique normale
+            if (isMyTurn && selectedIndices.length > 0) {
+                btnPlay.disabled = false;
+                btnPlay.style.opacity = 1;
+            } else {
+                btnPlay.disabled = true;
+                btnPlay.style.opacity = 0.5;
+            }
+
+            if (isMyTurn && canChallenge) {
+                btnLiar.disabled = false;
+                btnLiar.style.opacity = 1;
+            } else {
+                btnLiar.disabled = true;
+                btnLiar.style.opacity = 0.5;
+            }
+
+            if (isMyTurn && myHand.length === 0) {
+                btnPass.disabled = false;
+                btnPass.style.opacity = 1;
+                btnPass.style.background = "#2196F3"; 
+            } else {
+                btnPass.disabled = true;
+                btnPass.style.opacity = 0.5;
+                btnPass.style.background = "#555";
+            }
+        }
+
+        function passTurn() {
+            if (!isMyTurn || myHand.length > 0 || controlsLocked) return;
+            socket.emit('passTurn');
+        }
+
+        function playCards() {
+            if (!isMyTurn || selectedIndices.length === 0 || controlsLocked) return;
+            socket.emit('playCards', { cardIndices: selectedIndices });
+        }
+
+        function callLiar() {
+            if (!isMyTurn || !canChallenge || controlsLocked) return;
+            socket.emit('callLiar');
+        }
+
+
+        socket.on('rouletteTurn', (data) => {
+            const overlay = document.getElementById('roulette-overlay');
+            const nameDisplay = document.getElementById('roulette-name');
+            const box = document.getElementById('roulette-box');
+            
+            overlay.style.display = 'flex';
+            box.classList.remove('winner-pulse');
+            
+            // Liste des joueurs disponibles pour l'animation
+            const candidates = Object.values(allPlayers);
+            if(candidates.length === 0) return;
+
+            let startTime = Date.now();
+            let duration = data.duration;
+            let intervalTime = 50; // Vitesse initiale (très rapide)
+            let timer;
+
+            function spin() {
+                // 1. Choisir un nom aléatoire pour l'effet visuel
+                const randomPlayer = candidates[Math.floor(Math.random() * candidates.length)];
+                nameDisplay.innerText = randomPlayer.name;
+                
+                // Couleur du joueur
+                const colorHex = '#' + randomPlayer.color.toString(16).padStart(6, '0');
+                nameDisplay.style.color = colorHex;
+                box.style.borderColor = colorHex;
+
+                // 2. Gestion du temps
+                const elapsed = Date.now() - startTime;
+                
+                if (elapsed < duration) {
+                    // On ralentit progressivement
+                    // Plus on avance, plus intervalTime augmente
+                    intervalTime = 50 + (elapsed / duration) * 300; 
+                    timer = setTimeout(spin, intervalTime);
+                } else {
+                    // 3. FIN : On affiche le VRAI vainqueur
+                    const winner = allPlayers[data.winnerId];
+                    if (winner) {
+                        nameDisplay.innerText = winner.name;
+                        const winColor = '#' + winner.color.toString(16).padStart(6, '0');
+                        nameDisplay.style.color = winColor;
+                        box.style.borderColor = "#ffd700"; // Or pour la victoire
+                        box.classList.add('winner-pulse');
+                    }
+                    
+                    // On cache après 1.5 secondes
+                    setTimeout(() => {
+                        overlay.style.display = 'none';
+                    }, 1500);
+                }
+            }
+
+            spin();
+        });
+
+        // Écouteur pour la distribution
+        socket.on('dealingAnimation', (data) => {
+            isDealing = true; // On verrouille l'affichage automatique
+            animateDealing(data.targets, data.cardCount);
+        });
+
+        
+        function animateDealing(playerIds, cardsPerPlayer) {
+            // On vide les mains visuellement au début
+            document.getElementById('my-hand').innerHTML = "";
+            
+            const deckEl = document.getElementById('deck-pile');
+            // Sécurité si la pioche n'est pas encore rendue
+            if (!deckEl) return; 
+
+            const deckRect = deckEl.getBoundingClientRect();
+            const startX = deckRect.left;
+            const startY = deckRect.top;
+
+            let delay = 0;
+            const dealSpeed = 150; 
+
+            // Calcul de la durée totale pour déverrouiller à la fin
+            const totalDuration = (cardsPerPlayer * playerIds.length * dealSpeed) + 800;
+
+            for (let c = 0; c < cardsPerPlayer; c++) {
+                
+                playerIds.forEach(pid => {
+                    const cardIndex = c;
+
+                    setTimeout(() => {
+                        // On cherche la cible
+                        const playerEl = document.getElementById(`player-pos-${pid}`);
+                        
+                        // SÉCURITÉ : Si le joueur n'est pas trouvé dans le DOM (bug rare), on ignore cette carte
+                        // pour ne pas faire planter toute la boucle.
+                        if (!playerEl) return;
+
+                        let endX, endY;
+                        const isMe = (playerEl.innerText.includes(myName)); // Vérification simple par nom
+
+                        if (isMe) {
+                            endX = (window.innerWidth / 2) - 100 + (c * 40); 
+                            endY = window.innerHeight - 50;
+                        } else {
+                            const rect = playerEl.getBoundingClientRect();
+                            endX = rect.left + rect.width / 2 - 30;
+                            endY = rect.top + rect.height / 2 - 45;
+                        }
+
+                        // Création Carte volante
+                        const card = document.createElement('div');
+                        card.className = 'flying-card';
+                        document.body.appendChild(card);
+
+                        card.style.left = startX + 'px';
+                        card.style.top = startY + 'px';
+                        card.style.transform = 'scale(1) rotate(0deg)';
+                        card.style.transition = 'all 0.6s ease-out'; 
+
+                        // Force Reflow
+                        card.getBoundingClientRect();
+
+                        // Animation vers la cible
+                        card.style.left = endX + 'px';
+                        card.style.top = endY + 'px';
+                        card.style.transform = `scale(${isMe ? 1 : 0.5}) rotate(${Math.random() * 10 - 5}deg)`;
+
+                        // Arrivée
+                        setTimeout(() => {
+                            card.remove();
+
+                            // Apparition dans la main réelle (Seulement pour moi)
+                            if (isMe) {
+                                if (myHand[cardIndex]) {
+                                    const handDiv = document.getElementById('my-hand');
+                                    
+                                    // Évite les doublons si la carte est déjà là
+                                    // (On vérifie s'il y a déjà c+1 enfants)
+                                    if (handDiv.children.length <= cardIndex) {
+                                        const realCard = createCardElement(myHand[cardIndex], true);
+                                        realCard.onclick = () => toggleSelectCard(cardIndex, realCard);
+                                        realCard.style.animation = "popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+                                        handDiv.appendChild(realCard);
+                                        updateButtons();
+                                    }
+                                }
+                            }
+                        }, 600);
+
+                    }, delay);
+                    
+                    delay += dealSpeed;
+                });
+            }
+
+            // Fin de la séquence
+            setTimeout(() => {
+                isDealing = false; 
+                // On force un rendu propre final pour être sûr d'avoir toutes les cartes
+                // (Utile si un lag a fait sauter une animation)
+                renderHand(); 
+            }, totalDuration);
+        }
+    </script>
+</body>
+</html>

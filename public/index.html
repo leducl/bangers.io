@@ -46,32 +46,50 @@
 
                     <div id="host-settings" style="display:none;">
                         <h4 style="margin:10px 0 5px 0; color:#e91e63;">PARAMÈTRES DE LA PARTIE</h4>
-                        
-                        <label>CARTE</label>
-                        <select id="map-select" onchange="updateSettings()"></select>
 
-                        <div class="setting-row">
-                            <div style="flex:1">
-                                <label>SCORE MAX</label>
-                                <input type="number" id="score-input" value="15" min="5" max="100" onchange="updateSettings()">
-                            </div>
-                            <div style="flex:1">
-                                <label>TEMPS (Sec)</label>
-                                <input type="number" id="time-input" value="45" min="15" max="120" onchange="updateSettings()">
-                            </div>
-                        </div>
-                        
-                        <label>MODE DE JEU</label>
-                        <select id="mode-select" onchange="updateSettings()">
-                            <option value="respawn">Infini (Respawn)</option>
-                            <option value="perma">Survie (Mort Subite)</option>
+                        <label>JEU À LANCER</label>
+                        <select id="game-select" onchange="toggleGameUI()" style="width:100%; padding:5px; margin-bottom:15px;">
+                            <option value="bangers">Bangers.io (Plateforme)</option>
+                            <option value="liars">Liar's Bar (Cartes/Bluff)</option>
                         </select>
 
-                        <label>OBJETS AUTORISÉS (DRAFT)</label>
-                        <div class="item-grid" id="host-item-selector">
+                        <div id="options-bangers">
+                            <label>CARTE</label>
+                            <select id="map-select" onchange="updateSettings()"></select>
+
+                            <div class="setting-row">
+                                <div style="flex:1">
+                                    <label>SCORE MAX</label>
+                                    <input type="number" id="score-input" value="15" min="5" max="100" onchange="updateSettings()">
+                                </div>
+                                <div style="flex:1">
+                                    <label>TEMPS (Sec)</label>
+                                    <input type="number" id="time-input" value="45" min="15" max="120" onchange="updateSettings()">
+                                </div>
                             </div>
 
-                        <button onclick="doLaunchGame()" style="margin-top:15px; background:#4caf50;">LANCER LA PARTIE</button>
+                            <label>MODE DE JEU</label>
+                            <select id="mode-select" onchange="updateSettings()">
+                                <option value="respawn">Infini (Respawn)</option>
+                                <option value="perma">Survie (Mort Subite)</option>
+                            </select>
+
+                            <label>OBJETS AUTORISÉS</label>
+                            <div class="item-grid" id="host-item-selector"></div>
+                        </div>
+
+                        <div id="options-liars" style="display:none;">
+                            <label>TAILLE DU DECK</label>
+                            <select id="liars-deck-size">
+                                <option value="20">20 Cartes (Rapide)</option>
+                                <option value="52">52 Cartes (Complet)</option>
+                            </select>
+                            <p style="font-size:12px; color:#aaa; margin-top:5px;">
+                                Bluffez vos amis et soyez le dernier survivant à la table.
+                            </p>
+                        </div>
+
+                        <button onclick="doLaunchGame()" style="margin-top:15px; background:#4caf50; width:100%;">LANCER LA PARTIE</button>
                     </div>
 
                     <div id="waiting-msg" style="text-align:center; color:#aaa; margin-top:20px;">
@@ -139,6 +157,23 @@
                 list.innerHTML += `<div class="player-item"><span>${r.hasPass?'🔒':''} Salle #${r.code} (${r.count}/${r.max})</span> <button style="width:auto; padding:5px 10px;" onclick="joinRoom('${r.code}', ${r.hasPass})">GO</button></div>`;
             });
         });
+
+        // Change l'interface selon le jeu choisi
+        function toggleGameUI() {
+            const game = document.getElementById('game-select').value;
+
+            if (game === 'bangers') {
+                document.getElementById('options-bangers').style.display = 'block';
+                document.getElementById('options-liars').style.display = 'none';
+                // Afficher la preview de map
+                document.getElementById('preview-panel').style.visibility = 'visible';
+            } else {
+                document.getElementById('options-bangers').style.display = 'none';
+                document.getElementById('options-liars').style.display = 'block';
+                // Cacher la preview de map (pas utile pour les cartes)
+                document.getElementById('preview-panel').style.visibility = 'hidden';
+            }
+        }
 
         function doCreateRoom() {
             socket.emit('createRoom', { name: myName, color: myColor, roomName: document.getElementById('room-config-name').value, isPublic: true });
@@ -364,16 +399,27 @@
         }
 
         function doLaunchGame() {
-            // On déclenche le jeu, le serveur utilisera la config stockée dans la Room
-            // On renvoie quand même la config actuelle pour être sûr
-            const config = {
-                mapId: document.getElementById('map-select').value,
-                maxScore: document.getElementById('score-input').value,
-                runTime: document.getElementById('time-input').value,
-                gameMode: document.getElementById('mode-select').value,
-                allowedItems: selectedItems
-            };
-            socket.emit('hub_launchGame', { gameId: 'bangers', options: config });
+            const selectedGame = document.getElementById('game-select').value;
+            let options = {};
+
+            if (selectedGame === 'bangers') {
+                // Récupère les options de Bangers
+                options = {
+                    mapId: document.getElementById('map-select').value,
+                    maxScore: document.getElementById('score-input').value,
+                    runTime: document.getElementById('time-input').value,
+                    gameMode: document.getElementById('mode-select').value,
+                    allowedItems: selectedItems
+                };
+            } else if (selectedGame === 'liars') {
+                // Récupère les options de Liars
+                options = {
+                    deckSize: document.getElementById('liars-deck-size').value
+                };
+            }
+
+            // Envoie au serveur
+            socket.emit('hub_launchGame', { gameId: selectedGame, options: options });
         }
         
         // Redirections et Erreurs
