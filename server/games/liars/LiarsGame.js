@@ -264,9 +264,19 @@ handleChallenge(challengerId) {
 
     triggerRussianRoulette(playerId) {
         const victim = this.players[playerId];
-        
-        // 1 chance sur 6 de mourir
-        const isFatal = Math.random() < (1/6); 
+
+        const chambersLeft = 6 - victim.bullets;
+
+    // Sécurité (ne devrait jamais arriver)
+    if (chambersLeft <= 0) {
+        victim.isDead = true;
+        this.io.to(this.code).emit('gunshot', { target: playerId, status: 'DEAD' });
+        setTimeout(() => this.startNewRound(), 4000);
+        return;
+    }
+
+    // Proba réelle de roulette russe
+    const isFatal = Math.random() < (1 / chambersLeft); 
 
         if (isFatal) {
             victim.isDead = true;
@@ -351,5 +361,6 @@ handleChallenge(challengerId) {
     
     onPlayerDisconnect(socketId) {}
 }
+
 
 module.exports = LiarsGame;
