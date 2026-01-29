@@ -2,429 +2,384 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>Bangers.io - Lobby</title>
+    <title>NetParty Hub - Bangers.io</title>
     <script src="/socket.io/socket.io.js"></script>
-    <style>
-        body { margin: 0; background: #121212; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        
-        /* Containers */
-        #ui-container { margin-top: 50px; width: 400px; position: relative; z-index: 10; }
-        .panel { background: #1e1e1e; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #333; display: none; }
-        .panel.active { display: block; }
-        
-        /* Inputs & Buttons */
-        h1, h2 { text-align: center; margin-top: 0; color: #e91e63; }
-        input, select, button { width: 100%; box-sizing: border-box; padding: 12px; margin: 8px 0; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: white; font-size: 16px; }
-        button { background: #e91e63; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        button:hover { background: #c2185b; }
-        button.secondary { background: #444; }
-        button.secondary:hover { background: #555; }
-        
-        /* Room List */
-        .room-item { background: #252525; padding: 10px; display: flex; justify-content: space-between; align-items: center; border-radius: 5px; margin-bottom: 5px; border-left: 4px solid #e91e63; }
-        
-        /* Errors */
-        #error-msg { color: #ff5252; text-align: center; margin-bottom: 10px; font-size: 14px; min-height: 20px;}
-    </style>
+    <script src="items.js"></script> 
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
     <div id="ui-container">
         
-        <div id="panel-menu" class="panel active">
-            <h1>Bangers.io</h1>
-            <div id="error-msg"></div>
-            
-            <label>Ton Pseudo</label>
-            <input type="text" id="username" placeholder="Pseudo" maxlength="10">
-            
-            <label>Ta Couleur</label>
-            <input type="color" id="usercolor" value="#00ff00" style="height: 50px; padding: 2px;">
-
-            <hr style="border-color: #333; margin: 20px 0;">
-            
-            <button onclick="goToCreate()">CRÉER UN SALON</button>
-            <button onclick="goToJoinList()">LISTE DES SALONS</button>
-            <button onclick="goToJoinCode()" class="secondary">REJOINDRE VIA CODE</button>
+        <div id="login-panel" class="panel active">
+            <h1>NETPARTY HUB</h1>
+            <input type="text" id="username" placeholder="Ton Pseudo" maxlength="12">
+            <input type="color" id="usercolor" value="#00ff00" style="height:40px;">
+            <button onclick="doLogin()">ENTRER</button>
         </div>
 
-        <script src="items.js"></script> 
+        <div id="lobby-menu" class="panel">
+            <h2 id="welcome-msg"></h2>
+            <button onclick="showPanel('create-room-panel')">CRÉER UNE SALLE</button>
+            <button onclick="refreshRooms()" class="secondary">ACTUALISER</button>
+            <div id="room-list" style="margin-top:20px; max-height:300px; overflow-y:auto;"></div>
+        </div>
 
-        <div id="panel-create" class="panel">
-            <h2>Créer un Salon</h2>
-            
-            <div style="text-align:center; margin-bottom:10px;">
-                <canvas id="create-map-preview" width="300" height="225" style="background:#000; border:2px solid #555; border-radius:4px;"></canvas>
-            </div>
+        <div id="create-room-panel" class="panel">
+            <h2>NOUVELLE SALLE</h2>
+            <input type="text" id="room-config-name" placeholder="Nom de la salle" value="Salle de Jeux">
+            <button onclick="doCreateRoom()">CRÉER</button>
+            <button onclick="showPanel('lobby-menu')" class="secondary">RETOUR</button>
+        </div>
 
-            <label>Choisir la Carte :</label>
-            <select id="create-map" onchange="updateMapPreview()"><option>Chargement...</option></select>            
-            <label>Visibilité :</label>
-            <select id="create-public">
-                <option value="true">Public (Visible)</option>
-                <option value="false">Privé (Caché)</option>
-            </select>
-            
-            <button onclick="toggleAdvanced()" class="secondary" style="margin: 15px 0; background:#444; border:1px solid #666;">
-                ⚙️ Paramètres de la partie...
-            </button>
-
-            <div id="advanced-options" style="display:none; background:#222; padding:15px; border-radius:8px; border:1px solid #444; margin-bottom:15px;">
-                <h3 style="margin-top:0; font-size:16px; color:#aaa; border-bottom:1px solid #444; padding-bottom:5px;">Règles</h3>
+        <div id="room-lobby-panel" class="panel" style="width: 100%; box-sizing: border-box;">
+            <div class="lobby-grid">
                 
-                <label>Points pour gagner :</label>
-                <input type="number" id="create-score" value="20" min="5" max="100">
-
-                <label>Temps de la manche (secondes) :</label>
-                <input type="number" id="create-time" value="45" min="10" max="300">
-
-                <label>Mode de jeu :</label>
-                <select id="create-mode">
-                    <option value="respawn">Classique (Respawn infini)</option>
-                    <option value="perma">Mort Subite (1 seule vie)</option>
-                </select>
-
-                <h3 style="margin-top:15px; font-size:16px; color:#aaa; border-bottom:1px solid #444; padding-bottom:5px;">Objets Autorisés</h3>
-                
-                <div id="create-items-container" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap:10px; margin-top:10px;">
+                <div class="lobby-column">
+                    <h2 id="lobby-title" style="text-align:left; margin:0">SALON</h2>
+                    <div id="lobby-code-display" style="color:#888; font-family:monospace; margin-bottom:10px;">CODE: ???</div>
+                    
+                    <div style="background:#222; padding:10px; border-radius:5px;">
+                        <h4 style="margin:0 0 10px 0; color:#aaa;">JOUEURS</h4>
+                        <div id="player-list"></div>
                     </div>
+
+                    <div id="host-settings" style="display:none;">
+                        <h4 style="margin:10px 0 5px 0; color:#e91e63;">PARAMÈTRES DE LA PARTIE</h4>
+                        
+                        <label>CARTE</label>
+                        <select id="map-select" onchange="updateSettings()"></select>
+
+                        <div class="setting-row">
+                            <div style="flex:1">
+                                <label>SCORE MAX</label>
+                                <input type="number" id="score-input" value="15" min="5" max="100" onchange="updateSettings()">
+                            </div>
+                            <div style="flex:1">
+                                <label>TEMPS (Sec)</label>
+                                <input type="number" id="time-input" value="45" min="15" max="120" onchange="updateSettings()">
+                            </div>
+                        </div>
+                        
+                        <label>MODE DE JEU</label>
+                        <select id="mode-select" onchange="updateSettings()">
+                            <option value="respawn">Infini (Respawn)</option>
+                            <option value="perma">Survie (Mort Subite)</option>
+                        </select>
+
+                        <label>OBJETS AUTORISÉS (DRAFT)</label>
+                        <div class="item-grid" id="host-item-selector">
+                            </div>
+
+                        <button onclick="doLaunchGame()" style="margin-top:15px; background:#4caf50;">LANCER LA PARTIE</button>
+                    </div>
+
+                    <div id="waiting-msg" style="text-align:center; color:#aaa; margin-top:20px;">
+                        En attente de l'hôte...
+                    </div>
+                    <button onclick="doLeaveRoom()" class="secondary">QUITTER LE SALON</button>
+                </div>
+
+                <div class="lobby-column">
+                    <div id="preview-panel">
+                        <h3 style="color:white; margin-top:0;">RÉGLAGES ACTUELS</h3>
+                        
+                        <canvas id="map-canvas" width="240" height="180"></canvas>
+                        <div id="preview-map-name" style="font-weight:bold; color:#e91e63; margin-bottom:10px;">Chargement...</div>
+
+                        <div style="text-align:left; font-size:14px; color:#ccc;">
+                            <div style="margin-bottom:5px;">🏁 Score: <span id="disp-score" style="color:white; font-weight:bold;">-</span></div>
+                            <div style="margin-bottom:5px;">⏱ Temps: <span id="disp-time" style="color:white; font-weight:bold;">-</span></div>
+                            <div style="margin-bottom:10px;">💀 Mode: <span id="disp-mode" style="color:#e91e63; font-weight:bold;">-</span></div>
+                            
+                            <label>OBJETS DISPONIBLES :</label>
+                            <div id="preview-items-list" class="preview-items">
+                                </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
-            
-            <input type="password" id="create-pass" placeholder="Mot de passe (Laisser vide pour aucun)">
-
-            <button onclick="doCreateRoom()">VALIDER ET CRÉER</button>
-            <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
         </div>
 
-        <div id="panel-list" class="panel">
-            <h2>Salons Publics</h2>
-            <div id="room-list-container">Chargement...</div>
-            <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
-        </div>
-
-        <div id="panel-code" class="panel">
-            <h2>Rejoindre</h2>
-            <input type="text" id="join-code-input" placeholder="Entrer le Code du Salon (ex: ABCDE)" style="text-transform:uppercase">
-            <input type="password" id="join-pass-input" placeholder="Mot de passe (Si nécessaire)">
-            <button onclick="doJoinByCode()">REJOINDRE</button>
-            <button onclick="showPanel('panel-menu')" class="secondary">RETOUR</button>
-        </div>
-
-        <div id="panel-lobby" class="panel">
-            <h2 id="lobby-code">CODE: ----</h2>
-
-            <h3 id="lobby-map-name" style="text-align:center; color:#e91e63; margin:5px 0;">Map: ...</h3>
-            <div style="text-align:center;">
-                <canvas id="lobby-map-preview" width="300" height="225" style="background:#000; border:1px solid #444;"></canvas>
-            </div>
-
-            <p style="text-align:center; color:#aaa">En attente de l'hôte...</p>
-            <div id="player-list" style="margin: 20px 0; background:#111; padding:10px; border-radius:5px;"></div>
-            
-            <button id="btn-start" onclick="doStartGame()" style="display:none">LANCER LA PARTIE</button>
-            <button onclick="location.reload()" class="secondary">QUITTER</button>
-        </div>
     </div>
 
     <script>
-        // Initialisation Socket
         const socket = io();
-        let availableMaps = []; // On stockera la liste complète reçue du serveur
+        let myName = localStorage.getItem('np_username') || "";
+        let myColor = localStorage.getItem('np_usercolor') || "#00ff00";
+        let isHost = false;
+        let selectedItems = []; // IDs des items sélectionnés par l'hôte
+        let pendingMapId = null;
 
-        // --- SAUVEGARDE ET CHARGEMENT LOCALE ---
-        window.addEventListener('load', () => {
-            const savedName = localStorage.getItem('np_username');
-            const savedColor = localStorage.getItem('np_usercolor');
-
-            if(savedName) document.getElementById('username').value = savedName;
-            if(savedColor) document.getElementById('usercolor').value = savedColor;
-        });
-
-        function renderMapOnCanvas(canvasId, mapItems) {
-            const canvas = document.getElementById(canvasId);
-            if (!canvas || !mapItems) return;
-            
-            const ctx = canvas.getContext('2d');
-            const W = 800; // Largeur réelle du jeu
-            const H = 600; // Hauteur réelle du jeu
-            
-            // Calcul du ratio pour adapter 800x600 à la taille du canvas (300x225)
-            const scaleX = canvas.width / W;
-            const scaleY = canvas.height / H;
-
-            // Effacer
-            ctx.fillStyle = '#222';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Dessiner chaque objet
-            mapItems.forEach(item => {
-                const def = ITEM_REGISTRY[item.type];
-                if (def) {
-                    // Couleur de l'objet (fallback si pas d'image, ou code couleur défini)
-                    // On utilise la propriété .color de items.js
-                    let colorHex = '#888888';
-                    if (def.color) colorHex = '#' + def.color.toString(16).padStart(6, '0');
-                    
-                    // Cas spéciaux pour rendre la map lisible
-                    if (item.type === 90) colorHex = '#0000FF'; // Départ Bleu
-                    if (item.type === 91) colorHex = '#FFD700'; // Arrivée Or
-                    if (def.isSolid) ctx.globalAlpha = 1;
-                    else ctx.globalAlpha = 0.6; // Les pièges un peu transparents
-
-                    ctx.fillStyle = colorHex;
-                    
-                    // Dessin du rectangle à l'échelle
-                    // item.x et item.y sont les coins haut-gauche
-                    ctx.fillRect(item.x * scaleX, item.y * scaleY, 32 * scaleX, 32 * scaleY);
-                }
-            });
-            ctx.globalAlpha = 1;
-        }
-
-        // --- NAVIGATION UI ---
-
-
-        // Réception de la liste des maps (avec les DATA maintenant)
-        socket.on('mapListUpdate', (maps) => {
-            availableMaps = maps; // On sauvegarde
-            const select = document.getElementById('create-map');
-            select.innerHTML = "";
-            
-            maps.forEach(m => {
-                select.innerHTML += `<option value="${m.id}">${m.name}</option>`;
-            });
-
-            // Forcer l'affichage de la première map par défaut
-            updateMapPreview();
-        });
-
-        // Appelée quand on change le select HTML
-        function updateMapPreview() {
-            const select = document.getElementById('create-map');
-            const mapId = select.value;
-            const mapObj = availableMaps.find(m => m.id === mapId);
-            
-            if (mapObj) {
-                renderMapOnCanvas('create-map-preview', mapObj.data);
-            }
-        }
+        // --- INIT & NAVIGATION ---
+        if(myName) document.getElementById('username').value = myName;
+        document.getElementById('usercolor').value = myColor;
 
         function showPanel(id) {
-            document.querySelectorAll('.panel').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
             document.getElementById(id).classList.add('active');
-            document.getElementById('error-msg').innerText = "";
         }
 
-        function getUserInfo() {
-            const name = document.getElementById('username').value || "Joueur" + Math.floor(Math.random()*1000);
-            const colorRaw = document.getElementById('usercolor').value;
-            const color = parseInt(colorRaw.replace('#', '0x'));
-            
-            // SAUVEGARDE
-            localStorage.setItem('np_username', name);
-            localStorage.setItem('np_usercolor', colorRaw);
-            
-            return { name, color };
+        function doLogin() {
+            myName = document.getElementById('username').value.trim();
+            myColor = document.getElementById('usercolor').value;
+            if(!myName) return alert("Pseudo requis");
+            localStorage.setItem('np_username', myName);
+            localStorage.setItem('np_usercolor', myColor);
+            showPanel('lobby-menu');
+            refreshRooms();
         }
 
-        function goToCreate() { 
-            showPanel('panel-create'); 
-            // Demander la liste des cartes au serveur quand on ouvre ce menu
-            socket.emit('requestMapList');
-            initCreateUI(); 
-        } 
-
-        socket.on('mapListUpdate', (maps) => {
-            const select = document.getElementById('create-map');
-            select.innerHTML = "";
-            maps.forEach(m => {
-                select.innerHTML += `<option value="${m.id}">${m.name}</option>`;
-            });
-        });
-
-        function goToJoinCode() { showPanel('panel-code'); }
-        function goToJoinList() { 
-            showPanel('panel-list'); 
-            socket.emit('requestRoomList');
-        }
-
-        // --- ACTIONS SOCKET ---
-
-        function toggleAdvanced() {
-            const el = document.getElementById('advanced-options');
-            if (el.style.display === 'none') {
-                el.style.display = 'block';
-            } else {
-                el.style.display = 'none';
-            }
-        }
-
-        function initCreateUI() {
-            const container = document.getElementById('create-items-container');
-            container.innerHTML = "";
-
-            Object.values(ITEM_REGISTRY).forEach(item => {
-                if (!item.isSystem) {
-                    const checked = "checked";
-                    
-                    // On prépare l'image ou un carré de couleur si pas d'image
-                    let visual = "";
-                    if (item.image) {
-                        // Assure-toi que les images sont bien dans un dossier 'assets/' accessible
-                        visual = `<img src="assets/${item.image}" style="width:24px; height:24px; object-fit:contain; margin-right:8px;">`;
-                    } else {
-                        const colorHex = '#' + item.color.toString(16).padStart(6, '0');
-                        visual = `<div style="width:24px; height:24px; background:${colorHex}; margin-right:8px; border-radius:4px; border:1px solid #555;"></div>`;
-                    }
-
-                    // On crée une belle étiquette cliquable
-                    container.innerHTML += `
-                        <label style="
-                            background:#333; 
-                            padding:8px; 
-                            border-radius:6px; 
-                            font-size:13px; 
-                            display:flex; 
-                            align-items:center; 
-                            cursor:pointer; 
-                            border:1px solid #444; 
-                            user-select:none;
-                            transition:0.2s;
-                        " onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
-                            
-                            <input type="checkbox" id="item-chk-${item.id}" value="${item.id}" ${checked} style="width:auto; margin:0 8px 0 0;">
-                            ${visual}
-                            <span>${item.name}</span>
-                        </label>`;
-                }
-            });
-        }
-
-
-        // Créer
-        function doCreateRoom() {
-            const info = getUserInfo();
-            
-            // 1. Récupérer les items cochés
-            const allowedItems = [];
-            document.querySelectorAll('#create-items-container input[type="checkbox"]').forEach(chk => {
-                if(chk.checked) allowedItems.push(parseInt(chk.value));
-            });
-
-            // 2. Construire la config complète
-            const config = {
-                name: info.name,
-                color: info.color,
-                password: document.getElementById('create-pass').value,
-                isPublic: document.getElementById('create-public').value === "true",
-                mapId: document.getElementById('create-map').value,
-                maxScore: parseInt(document.getElementById('create-score').value) || 20,
-                // Nouveaux paramètres
-                runTime: parseInt(document.getElementById('create-time').value) || 45,
-                gameMode: document.getElementById('create-mode').value, // 'respawn' ou 'perma'
-                allowedItems: allowedItems
-            };
-
-            if (allowedItems.length < 1) return alert("Il faut au moins 1 objet !");
-
-            socket.emit('createRoom', config);
-        }
-
-        // Rejoindre via la liste
-        function joinFromList(code, hasPass) {
-            const info = getUserInfo();
-            let pass = "";
-            if(hasPass) pass = prompt("Ce salon est protégé. Mot de passe ?");
-            
-            socket.emit('joinRoom', { code, password: pass, name: info.name, color: info.color });
-        }
-
-        // Rejoindre via code manuel
-        function doJoinByCode() {
-            const info = getUserInfo();
-            const code = document.getElementById('join-code-input').value.toUpperCase().trim();
-            const pass = document.getElementById('join-pass-input').value;
-
-            if(code.length < 5) return alert("Code invalide");
-
-            socket.emit('joinRoom', { code, password: pass, name: info.name, color: info.color });
-        }
-
-        // Lancer la partie
-        function doStartGame() {
-            const codeText = document.getElementById('lobby-code').innerText.split(' ')[1];
-            socket.emit('startGame', codeText);
-        }
-
-        // --- ÉCOUTEURS SOCKET ---
-
-        socket.on('errorMsg', (msg) => {
-            alert(msg);
-        });
-
+        function refreshRooms() { socket.emit('requestRoomList'); }
         socket.on('roomListUpdate', (rooms) => {
-            const container = document.getElementById('room-list-container');
-            container.innerHTML = "";
-            if(rooms.length === 0) container.innerHTML = "<p>Aucun salon public.</p>";
-            
+            const list = document.getElementById('room-list');
+            list.innerHTML = rooms.length ? "" : "<div style='text-align:center; color:#555'>Aucune salle.</div>";
             rooms.forEach(r => {
-                container.innerHTML += `
-                    <div class="room-item">
-                        <span><b>${r.code}</b> (${r.count}/${r.max}) ${r.hasPass ? '🔒' : ''}</span>
-                        <button style="width:auto; padding:5px 15px; font-size:12px" 
-                            onclick="joinFromList('${r.code}', ${r.hasPass})">GO</button>
-                    </div>`;
+                list.innerHTML += `<div class="player-item"><span>${r.hasPass?'🔒':''} Salle #${r.code} (${r.count}/${r.max})</span> <button style="width:auto; padding:5px 10px;" onclick="joinRoom('${r.code}', ${r.hasPass})">GO</button></div>`;
             });
         });
+
+        function doCreateRoom() {
+            socket.emit('createRoom', { name: myName, color: myColor, roomName: document.getElementById('room-config-name').value, isPublic: true });
+        }
+        function joinRoom(code, hasPass) {
+            socket.emit('joinRoom', { code, name: myName, color: myColor }); // Simplifié sans mot de passe pour l'exemple
+        }
+        function doLeaveRoom() { location.reload(); }
+
+        // --- LOGIQUE LOBBY ---
 
         socket.on('roomJoined', (data) => {
-            showPanel('panel-lobby');
-            document.getElementById('lobby-code').innerText = `CODE: ${data.code}`;
-
-            // Affichage Info Map
-            if (data.mapName && data.mapData) {
-                document.getElementById('lobby-map-name').innerText = `Carte : ${data.mapName}`;
-                renderMapOnCanvas('lobby-map-preview', data.mapData);
-            }
-
-            // On délègue l'affichage à updatePlayers
+            showPanel('room-lobby-panel');
+            document.getElementById('lobby-code-display').innerText = `CODE: ${data.code}`;
+            isHost = data.isHost;
             updateLobbyUI(data.players);
+            
+            if (isHost) {
+                socket.emit('requestMapList');
+                initHostItemSelector();
+            } else {
+                // Demander les infos actuelles si on n'est pas hôte
+                socket.emit('requestLobbyInfo');
+            }
         });
 
         socket.on('updatePlayers', (players) => {
+            const me = Object.values(players).find(p => p.name === myName);
+            if(me) isHost = me.isHost;
             updateLobbyUI(players);
+        });
+
+        // --- GESTION DU CHANGEMENT D'HÔTE ---
+        socket.on('youAreHost', (currentConfig) => {
+            isHost = true;
+            alert("L'hôte est parti. Tu es le nouveau chef !");
+
+            // 1. On affiche le panneau de réglages
+            document.getElementById('host-settings').style.display = 'block';
+            document.getElementById('waiting-msg').style.display = 'none';
+
+            // 2. IMPORTANT : On met à jour les INPUTS avec la config du serveur
+            // Sinon, les inputs gardent leurs valeurs par défaut (ex: 15pts) et écrasent tout
+            if (currentConfig) {
+                if (currentConfig.maxScore) document.getElementById('score-input').value = currentConfig.maxScore;
+                if (currentConfig.runTime) document.getElementById('time-input').value = currentConfig.runTime;
+                if (currentConfig.gameMode) document.getElementById('mode-select').value = currentConfig.gameMode;
+                
+                // On met à jour la liste locale des items sélectionnés
+                if (currentConfig.allowedItems) {
+                    selectedItems = [...currentConfig.allowedItems];
+                }
+                if (currentConfig.mapId) {
+                    pendingMapId = currentConfig.mapId;
+                }
+            }
+
+            // 3. On demande la liste des cartes (car l'invité ne l'avait pas)
+            socket.emit('requestMapList');
+
+            // 4. On initialise le sélecteur d'objets
+            initHostItemSelector();
         });
 
         function updateLobbyUI(players) {
             const list = document.getElementById('player-list');
             list.innerHTML = "";
-            
-            // Récupérer mon nom local pour vérifier si je suis l'hôte
-            const myName = localStorage.getItem('np_username');
-            let amIHost = false;
-
             Object.values(players).forEach(p => {
-                const colorHex = '#' + p.color.toString(16).padStart(6, '0');
-                
-                // Si ce joueur correspond à mon nom ET qu'il est host
-                if(p.name === myName && p.isHost) {
-                    amIHost = true;
-                }
-
-                list.innerHTML += `<div style="color:${colorHex}; margin:5px">
-                    ${p.isHost ? '👑' : '👤'} ${p.name}
-                </div>`;
+                list.innerHTML += `<div class="player-item"><span style="color:${typeof p.color === 'number' ? '#' + p.color.toString(16).padStart(6,'0') : p.color}">${p.isHost?'👑 ':''}${p.name}</span></div>`;
             });
 
-            // Bouton Start visible seulement si je suis l'host
-            document.getElementById('btn-start').style.display = amIHost ? 'block' : 'none';
+            document.getElementById('host-settings').style.display = isHost ? 'block' : 'none';
+            document.getElementById('waiting-msg').style.display = isHost ? 'none' : 'block';
         }
 
-        // --- REDIRECTION VERS LE JEU ---
-        socket.on('redirectGame', (data) => {
-            console.log("Lancement de la partie, redirection vers :", data.url);
-            window.location.href = data.url;
+        socket.on('mapListUpdate', (maps) => {
+            const select = document.getElementById('map-select');
+            select.innerHTML = "";
+            maps.forEach(m => {
+                select.innerHTML += `<option value="${m.id}">${m.name}</option>`;
+            });
+            if (pendingMapId) {
+                select.value = pendingMapId; 
+                pendingMapId = null; // On vide la variable pour ne pas interférer plus tard
+            }
+            // Initial trigger pour envoyer la configuration par défaut
+            updateSettings();
         });
+
+        // --- GESTION DES REGLAGES (Client-Side) ---
+
+        // 1. Initialiser la grille d'items (Hôte seulement)
+        function initHostItemSelector() {
+            const container = document.getElementById('host-item-selector');
+            container.innerHTML = "";
+            
+            // SI selectedItems est vide (premier lancement), on coche tout par défaut.
+            // SI on vient de récupérer le lead (host migration), selectedItems contient déjà la config du serveur.
+            const isFirstInit = (selectedItems.length === 0);
+
+            Object.keys(ITEM_REGISTRY).forEach(id => {
+                const item = ITEM_REGISTRY[id];
+                if(item.isSystem) return;
+
+                const itemId = parseInt(id);
+
+                // Logique de présélection
+                if (isFirstInit) {
+                    selectedItems.push(itemId); 
+                }
+                
+                // Est-ce que cet item est dans la liste active ?
+                const isActive = selectedItems.includes(itemId);
+
+                const div = document.createElement('div');
+                div.className = isActive ? 'item-option selected' : 'item-option';
+                div.title = item.name;
+                
+                if(item.image) div.innerHTML = `<img src="assets/${item.image}">`;
+                else div.style.backgroundColor = '#' + item.color.toString(16).padStart(6,'0');
+
+                div.onclick = () => {
+                    const idx = selectedItems.indexOf(itemId);
+                    if(idx > -1) {
+                        selectedItems.splice(idx, 1);
+                        div.classList.remove('selected');
+                    } else {
+                        selectedItems.push(itemId);
+                        div.classList.add('selected');
+                    }
+                    updateSettings();
+                };
+                container.appendChild(div);
+            });
+        }
+
+        // 2. Envoyer les changements au serveur
+        window.updateSettings = function() {
+            if(!isHost) return;
+            const config = {
+                mapId: document.getElementById('map-select').value,
+                maxScore: document.getElementById('score-input').value,
+                runTime: document.getElementById('time-input').value,
+                gameMode: document.getElementById('mode-select').value,
+                allowedItems: selectedItems
+            };
+            socket.emit('updateLobbySettings', config);
+        }
+
+        // 3. Recevoir les mises à jour (Tout le monde)
+        socket.on('lobbySettingsUpdate', (data) => {
+            const cfg = data.config;
+            
+            // Mise à jour textes droite
+            document.getElementById('disp-score').innerText = cfg.maxScore || 20;
+            document.getElementById('disp-time').innerText = (cfg.runTime || 45) + 's';
+            document.getElementById('disp-mode').innerText = (cfg.gameMode === 'perma') ? "SURVIE" : "INFINI";
+            
+            // Mise à jour liste items visuelle
+            const itemCont = document.getElementById('preview-items-list');
+            itemCont.innerHTML = "";
+            if(cfg.allowedItems && cfg.allowedItems.length > 0) {
+                cfg.allowedItems.forEach(id => {
+                    const item = ITEM_REGISTRY[id];
+                    if(item) {
+                        if(item.image) itemCont.innerHTML += `<img src="assets/${item.image}" title="${item.name}">`;
+                        else itemCont.innerHTML += `<div style="display:inline-block;width:10px;height:10px;background:#${item.color.toString(16)};margin:2px;"></div>`;
+                    }
+                });
+            } else {
+                itemCont.innerText = "Aucun objet !";
+            }
+
+            // Mise à jour Canvas
+            if (data.mapPreview) {
+                drawMapPreview(data.mapPreview);
+                const mapSelect = document.getElementById('map-select');
+                // Astuce pour récupérer le nom si on a la liste, sinon ID
+                const name = mapSelect.options[mapSelect.selectedIndex]?.text || cfg.mapId;
+                document.getElementById('preview-map-name').innerText = name || "Carte";
+            }
+        });
+
+        // --- CANVAS DESSIN ---
+        function drawMapPreview(mapData) {
+            const cvs = document.getElementById('map-canvas');
+            const ctx = cvs.getContext('2d');
+            
+            // Effacer (fond noir)
+            ctx.fillStyle = "#111";
+            ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+            if(!mapData) return;
+
+            // Calcul de l'échelle pour tout faire tenir dans 240x180
+            // Supposons map standard 800x600 -> scale = 0.3
+            const scaleX = cvs.width / 800;
+            const scaleY = cvs.height / 600;
+            const scale = Math.min(scaleX, scaleY);
+
+            mapData.forEach(obj => {
+                const def = ITEM_REGISTRY[obj.type];
+                if(!def) return;
+
+                // Position ajustée
+                const x = obj.x * scale;
+                const y = obj.y * scale;
+                const s = 32 * scale; // Taille bloc standard 32px
+
+                // Couleur ou Dessin simple
+                if(def.color) {
+                    ctx.fillStyle = '#' + def.color.toString(16).padStart(6,'0');
+                } else {
+                    ctx.fillStyle = '#666';
+                }
+
+                if(obj.type == 90) ctx.fillStyle = "#0000ff"; // Départ
+                if(obj.type == 91) ctx.fillStyle = "#ffd700"; // Arrivée
+
+                // On dessine un carré
+                ctx.fillRect(x, y, s, s);
+            });
+        }
+
+        function doLaunchGame() {
+            // On déclenche le jeu, le serveur utilisera la config stockée dans la Room
+            // On renvoie quand même la config actuelle pour être sûr
+            const config = {
+                mapId: document.getElementById('map-select').value,
+                maxScore: document.getElementById('score-input').value,
+                runTime: document.getElementById('time-input').value,
+                gameMode: document.getElementById('mode-select').value,
+                allowedItems: selectedItems
+            };
+            socket.emit('hub_launchGame', { gameId: 'bangers', options: config });
+        }
+        
+        // Redirections et Erreurs
+        socket.on('redirectGame', (d) => window.location.href = d.url);
+        socket.on('forceRedirect', (u) => window.location.href = u);
+        socket.on('errorMsg', (m) => alert(m));
 
     </script>
 </body>

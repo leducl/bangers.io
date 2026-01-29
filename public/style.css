@@ -1,0 +1,261 @@
+/* public/style.css */
+
+:root {
+    --bg-dark: #121212;
+    --panel-bg: #1e1e1e;
+    --input-bg: #2a2a2a;
+    --accent-color: #e91e63;
+    --accent-hover: #c2185b;
+    --text-color: #eee;
+    --border-color: #333;
+}
+
+body {
+    margin: 0;
+    background: var(--bg-dark);
+    color: var(--text-color);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+/* --- CONTENEUR PRINCIPAL --- */
+#ui-container {
+    width: 100%;
+    max-width: 900px; /* Largeur max confortable pour Desktop */
+    position: relative;
+    z-index: 10;
+}
+
+/* --- PANNEAUX --- */
+.panel {
+    background: var(--panel-bg);
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    border: 1px solid var(--border-color);
+    display: none; /* Caché par défaut */
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.panel.active {
+    display: block;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- TYPOGRAPHIE & INPUTS --- */
+h1, h2, h3, h4 {
+    text-align: center;
+    color: var(--accent-color);
+    margin-top: 0;
+}
+
+h2 { margin-bottom: 20px; }
+
+input, select, button {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+    margin: 8px 0;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: var(--input-bg);
+    color: white;
+    font-size: 1rem;
+    outline: none;
+}
+
+input:focus, select:focus {
+    border-color: var(--accent-color);
+}
+
+button {
+    background: var(--accent-color);
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    transition: transform 0.1s, background 0.2s;
+}
+
+button:hover {
+    background: var(--accent-hover);
+    transform: translateY(-2px);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+button.secondary {
+    background: #444;
+}
+
+button.secondary:hover {
+    background: #555;
+}
+
+/* --- LAYOUT GRID (LOBBY) --- */
+.lobby-grid {
+    display: grid;
+    grid-template-columns: 1fr 300px; /* Desktop : Gauche variable, Droite fixe */
+    gap: 20px;
+}
+
+.lobby-column {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* --- ELEMENTS DE LISTE (JOUEURS / SALLES) --- */
+.player-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px;
+    background: #252525;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+}
+
+.player-item:hover {
+    background: #2f2f2f;
+    border-left-color: var(--accent-color);
+}
+
+/* --- SECTEURS PARAMETRES --- */
+#host-settings {
+    border-top: 1px solid var(--border-color);
+    padding-top: 15px;
+    margin-top: 10px;
+}
+
+.setting-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+label {
+    font-size: 0.85rem;
+    color: #aaa;
+    display: block;
+    margin-top: 10px;
+    margin-bottom: 2px;
+    text-align: left;
+}
+
+/* --- GRILLE D'ITEMS (SELECTEUR) --- */
+.item-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 5px;
+    background: #222;
+    padding: 10px;
+    border-radius: 5px;
+    justify-content: center;
+}
+
+.item-option { 
+    width: 44px; 
+    height: 44px; 
+    border: 2px solid #444; 
+    border-radius: 6px; 
+    cursor: pointer; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    background: #333;
+    transition: 0.2s;
+}
+
+.item-option img { 
+    width: 32px; 
+    height: 32px; 
+    object-fit: contain; 
+}
+
+.item-option.selected { 
+    border-color: #00ff00; 
+    background: rgba(0, 255, 0, 0.15); 
+    box-shadow: 0 0 5px rgba(0,255,0,0.3);
+}
+
+.item-option:hover { 
+    border-color: white; 
+    transform: scale(1.1);
+}
+
+/* --- PREVIEW PANEL (DROITE) --- */
+#preview-panel { 
+    background: #181818; 
+    padding: 15px; 
+    border-radius: 8px; 
+    text-align: center; 
+    border: 1px solid #333;
+}
+
+#map-canvas { 
+    background: #111; 
+    border: 1px solid #444; 
+    margin: 10px auto; 
+    display: block;
+    max-width: 100%; /* Responsive canvas */
+    height: auto;
+}
+
+.preview-items {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 5px;
+}
+
+.preview-items img { 
+    width: 28px; 
+    height: 28px; 
+    border: 1px solid #555; 
+    border-radius: 4px; 
+    background: #222; 
+    padding: 2px;
+}
+
+/* --- RESPONSIVE MOBILE --- */
+@media (max-width: 768px) {
+    #ui-container {
+        width: 100%;
+        margin-top: 10px;
+    }
+
+    .lobby-grid {
+        grid-template-columns: 1fr; /* Une seule colonne */
+    }
+
+    /* On inverse l'ordre visuel si on veut voir l'aperçu en premier, 
+       sinon on laisse tel quel (Panneau gauche au-dessus) */
+    
+    .setting-row {
+        flex-direction: row; /* On garde les inputs score/temps côte à côte */
+    }
+    
+    .item-grid {
+        justify-content: flex-start; /* Alignement gauche sur mobile */
+    }
+
+    h1 { font-size: 1.5rem; }
+    .panel { padding: 15px; }
+}

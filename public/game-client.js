@@ -50,9 +50,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         scene.add.existing(this);
         scene.physics.add.existing(this);
         
-        this.myOriginalColor = color;
+        let numericColor = color;
+        if (typeof color === 'string' && color.startsWith('#')) {
+            numericColor = parseInt(color.replace('#', ''), 16);
+        }
 
-        this.setTint(color);
+        this.myOriginalColor = numericColor;
+
+        this.setTint(numericColor);
         this.setCollideWorldBounds(true);
         this.setScale(0.8);
         
@@ -287,7 +292,52 @@ function preload() {
     });
 }
 
+
+// public/game-client.js
+
+// ... (Ton code existant) ...
+
 function create() {
+    // 1. Initialisation de Socket.io
+    socket = io();
+
+    // 2. Récupérer les infos de l'URL et du LocalStorage
+    const params = new URLSearchParams(window.location.search);
+    const roomCode = params.get('room');
+    const myName = localStorage.getItem('np_username');
+
+    if (!roomCode || !myName) {
+        alert("Erreur : Pas de salle ou de pseudo ! Retour au menu.");
+        window.location.href = '/';
+        return;
+    }
+
+    // 3. Envoyer la demande de connexion au jeu BANGERS
+    // C'est ici que la magie opère : on dit "Je suis là pour jouer dans la room X"
+    socket.emit('joinGamePhase', { 
+        code: roomCode, 
+        name: myName 
+    });
+
+    // --- ECOUTE DES ÉVÉNEMENTS DU JEU ---
+    
+    // Le serveur renvoie l'état actuel (Map, Joueurs, Timer...)
+    socket.on('gameState', (stateData) => {
+        handleGameState(stateData);
+    });
+
+    socket.on('timerUpdate', (val) => {
+        const timerText = document.getElementById('timer-display');
+        if(timerText) timerText.innerText = val;
+    });
+    
+    // Initialisation Inputs
+    cursors = this.input.keyboard.createCursorKeys();
+    keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    
+    // ClientItemLogic init
+    ClientItemLogic.init(this, solidGroup);
+
     this.cameras.main.setBackgroundColor('#333');
     
     this.physics.world.TILE_BIAS = 48;
@@ -431,6 +481,7 @@ function create() {
     if (pendingPlayersData) { 
         syncPlayers(this, pendingPlayersData); 
         pendingPlayersData = null; 
+        updateIngameScoreboard();
     }
 }
 
@@ -522,8 +573,8 @@ function updateIngameScoreboard() {
             status = '💀'; 
         }
         
-        const colorHex = '#' + p.tintTopLeft.toString(16).padStart(6, '0');
-        
+        const hexString = p.myOriginalColor.toString(16).padStart(6, '0');
+        const colorHex = '#' + hexString;        
         html += `
             <div class="sb-row" style="opacity: ${opacity}">
                 <div style="display:flex; align-items:center;">

@@ -1,3 +1,6 @@
+const Room = require('./server/core/Room.js'); 
+const BangersGame = require('./server/games/bangers/BangersGame.js');
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -8,12 +11,9 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
-const ITEM_REGISTRY = require('./public/items.js');
-const { loadMaps } = require('./server/MapLoader.js');
-const GameRoom = require('./server/GameRoom.js');
-const ItemLogic = require('./server/ItemLogic.js');
 
-// --- CONSTANTES ---
+// Chargement des maps (Attention au chemin qui doit être correct)
+const { loadMaps } = require('./server/games/bangers/MapLoader.js');
 const MAPS = loadMaps();
 const MAX_PLAYERS = 8;
 
@@ -21,7 +21,7 @@ let rooms = {};
 
 function getPublicRooms() {
     return Object.values(rooms)
-        .filter(r => r.config.isPublic && r.state === 'LOBBY')
+        .filter(r => r.config.isPublic && !r.activeGame)
         .map(r => ({
             code: r.code,
             count: Object.keys(r.players).length,
@@ -30,39 +30,93 @@ function getPublicRooms() {
         }));
 }
 
-io.on('connection', (socket) => {
+// Liste des événements standards (une fois connecté au jeu)
+const GAME_EVENTS = [
+    'selectItem', 'tryPlaceItem', 'playerMove', 
+    'reachedGoal', 'reportDeath', 'playerRespawn', 'voteSkip', 
+    'triggerBomb', 'triggerNuke'
+];
 
+io.on('connection', (socket) => {
+    
+    // --- 1. ROUTAGE SPÉCIAL POUR LA RECONNEXION (Le fix est ICI) ---
+    socket.on('joinGamePhase', (data) => {
+        // data contient { code, name }
+        const room = rooms[data.code];
+        
+        if (room) {
+            // ÉTAPE CRUCIALE : On ré-associe ce NOUVEAU socket au joueur existant
+            // La méthode addPlayer de Room va mettre à jour this.sockets[socket.id]
+            const result = room.addPlayer(socket.id, data.name, null);
+            
+            socket.join(data.code);
+            
+            // Maintenant que le lien est fait, on prévient le jeu !
+            if (room.activeGame) {
+                room.activeGame.handleClientEvent('joinGamePhase', socket.id, data);
+            }
+        } else {
+            socket.emit('errorMsg', "Partie introuvable ou terminée.");
+        }
+    });
+
+    // --- 2. ROUTAGE GÉNÉRIQUE (Pour les joueurs déjà reconnus) ---
+    GAME_EVENTS.forEach(eventName => {
+        socket.on(eventName, (data) => {
+            // On trouve la room grâce au socket ID (car on l'a enregistré juste avant !)
+            const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+            if (room && room.activeGame) {
+                room.activeGame.handleClientEvent(eventName, socket.id, data);
+            }
+        });
+    });
+
+    // --- 3. GESTION DU HUB ---
+
+    socket.on('hub_launchGame', (data) => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (room && room.isHost(socket.id)) {
+            if (data.gameId === 'bangers') {
+                room.startGame(BangersGame, { ...room.config, ...data.options, allMaps: MAPS });
+            }
+        }
+    });
+
+    socket.on('disconnect', () => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (room) {
+            room.removePlayer(socket.id);
+            
+            // Si la room est vide ET qu'aucun jeu n'est en cours, on supprime
+            // (Si un jeu est en cours, on garde la room un moment pour permettre la reco)
+            if (Object.keys(room.players).length === 0 && !room.activeGame) {
+                delete rooms[room.code];
+            }
+            io.emit('roomListUpdate', getPublicRooms());
+        }
+    });
 
     socket.on('requestMapList', () => {
-
         const list = Object.keys(MAPS).map(id => ({ 
-            id: id, 
-            name: MAPS[id].name,
-            data: MAPS[id].data // <-- Ajout vital pour la preview
+            id: id, name: MAPS[id].name 
         }));
         socket.emit('mapListUpdate', list);
     });
 
-    // LOBBY
     socket.on('requestRoomList', () => socket.emit('roomListUpdate', getPublicRooms()));
 
     socket.on('createRoom', (config) => {
         const code = Math.random().toString(36).substring(2, 7).toUpperCase();
-        
-        // On récupère l'ID de la map choisi dans la config, ou 'level1' par défaut
-        const mapId = config.mapId || 'classique';
-        
-        const room = new GameRoom(code, socket.id, config, mapId, io, MAPS);
+        const room = new Room(code, socket.id, io, config); 
         rooms[code] = room;
+        
         room.addPlayer(socket.id, config.name, config.color);
         socket.join(code);
+        
         socket.emit('roomJoined', { 
             code, 
             isHost: true, 
-            players: room.players,
-            // AJOUT : On envoie les données de la map pour l'affichage
-            mapData: MAPS[mapId].data,
-            mapName: MAPS[mapId].name
+            players: room.players
         });
         io.emit('roomListUpdate', getPublicRooms());
     });
@@ -74,210 +128,49 @@ io.on('connection', (socket) => {
         
         room.addPlayer(socket.id, data.name, data.color);
         socket.join(data.code);
+        
         socket.emit('roomJoined', { 
             code: data.code, 
             isHost: false, 
-            players: room.players,
-            // AJOUT
-            mapData: room.MAPS[room.mapId].data,
-            mapName: room.MAPS[room.mapId].name
+            players: room.players
         });
         io.to(data.code).emit('updatePlayers', room.players);
         io.emit('roomListUpdate', getPublicRooms());
     });
 
-    socket.on('startGame', (code) => {
-        const room = rooms[code];
-        if (room && room.players[room.sockets[socket.id]].isHost) {
-            // NOTE: On délègue tout à room.startGame() qui gère le délai maintenant
-            room.startGame(); 
-        }
-    });
+    // --- GESTION DES PARAMÈTRES DU LOBBY ---
+    socket.on('updateLobbySettings', (settings) => {
+        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+        if (room && room.isHost(socket.id)) {
+            // On sauvegarde la config dans la room
+            room.config = { ...room.config, ...settings };
 
-    // GAMEPLAY
-    socket.on('joinGamePhase', (data) => {
-        const room = rooms[data.code];
-        if (room) {
-            let found = false;
-            for(let pId in room.players) {
-                if(room.players[pId].name === data.name) {
-                    room.sockets[socket.id] = pId;
-                    socket.join(data.code);
-                    found = true;
-                    
-                    const player = room.players[pId];
-                    player.online = true; 
-                    if (room.disconnectedPlayers && room.disconnectedPlayers[pId]) {
-                        delete room.disconnectedPlayers[pId];
-                    }
-
-                    // --- AJOUT : GESTION DE LA MORT SUR RECONNEXION ---
-                    // Si on est en phase de RUN et en mode PERMA, le joueur doit mourir
-                    if (room.state === 'RUN' && room.config.gameMode === 'perma') {
-                        // S'il n'avait pas fini, il meurt
-                        if (!player.hasFinished) {
-                            player.isDead = true; 
-                            console.log(`[${room.code}] ${player.name} éliminé suite à reconnexion (Mode Perma).`);
-                        }
-                    }
-                    // --------------------------------------------------
-                    
-                    console.log(`[${room.code}] ${player.name} est RECONNECTÉ.`);
-
-                    socket.emit('gameState', { 
-                        state: room.state, 
-                        map: room.mapData, 
-                        players: room.players,
-                        options: room.draftOptions,
-                        roomConfig: { mode: room.config.gameMode }
-                    });
-                    
-                    socket.emit('timerUpdate', room.timerValue);
-                    io.to(room.code).emit('updatePlayers', room.players);
-                    
-                    // Vérifications de blocage
-                    if (room.state === 'DRAFT') room.checkAllSelected();
-                    if (room.state === 'PLACEMENT') room.checkAllPlaced();
-                    if (room.state === 'RUN') room.checkEndRoundCondition(); // <-- Vérif utile si sa mort termine la manche
-
-                    break;
-                }
+            // Si la map a changé, on récupère ses données pour la prévisualisation
+            let previewData = null;
+            if (settings.mapId && MAPS[settings.mapId]) {
+                previewData = MAPS[settings.mapId].data;
+            } else if (room.config.mapId && MAPS[room.config.mapId]) {
+                // Si la map n'a pas changé mais qu'on a besoin de renvoyer l'info
+                previewData = MAPS[room.config.mapId].data;
             }
-            if(!found) socket.emit('errorMsg', "Joueur non reconnu.");
+
+            // On diffuse à TOUT LE MONDE dans la salle (Hôte inclus pour confirmation)
+            io.to(room.code).emit('lobbySettingsUpdate', {
+                config: room.config,
+                mapPreview: previewData
+            });
         }
     });
 
-    socket.on('selectItem', (itemId) => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        
-        if (room && room.state === 'DRAFT') {
-            const pId = room.sockets[socket.id];
-            
-            // On cherche l'item dans le registre
-            const item = ITEM_REGISTRY[itemId];
-            
-            if(item) {
-                // On assigne l'item au joueur
-                room.players[pId].selectedItem = item;
-                
-                // --- AJOUTER CECI ---
-                // On vérifie si c'était le dernier joueur à choisir
-                room.checkAllSelected();
-            }
-        }
+    // Quand un joueur rejoint, on lui envoie les settings actuels
+    socket.on('requestLobbyInfo', () => {
+         const room = Object.values(rooms).find(r => r.sockets[socket.id]);
+         if(room) {
+             let previewData = (room.config.mapId && MAPS[room.config.mapId]) ? MAPS[room.config.mapId].data : null;
+             socket.emit('lobbySettingsUpdate', { config: room.config, mapPreview: previewData });
+         }
     });
-
-    socket.on('tryPlaceItem', (pos) => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if(room) room.placeItem(room.sockets[socket.id], pos.x, pos.y, pos.rotation);
-    });
-
-    socket.on('playerMove', (pos) => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if(room && room.state === 'RUN') {
-            socket.to(room.code).emit('remoteMove', { id: room.sockets[socket.id], x: pos.x, y: pos.y, anim: pos.anim });
-        }
-    });
-
-    socket.on('reachedGoal', () => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if(room) room.playerFinished(room.sockets[socket.id]);
-    });
-
-    socket.on('disconnect', () => {
-        // Trouver la room du joueur
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        
-        if (room) {
-            if (room.state === 'LOBBY') {
-                // --- LOGIQUE LOBBY (inchangée : suppression totale) ---
-                const pId = room.sockets[socket.id];
-                delete room.sockets[socket.id];
-                delete room.players[pId];
-                
-                if (Object.keys(room.players).length === 0) {
-                    delete rooms[room.code];
-                } else {
-                    // Gestion changement d'hôte si besoin
-                    const firstPId = Object.keys(room.players)[0];
-                    if(firstPId && !Object.values(room.players).some(p => p.isHost)) {
-                        room.players[firstPId].isHost = true;
-                    }
-                    io.to(room.code).emit('updatePlayers', room.players);
-                }
-            } else {
-                // --- LOGIQUE EN JEU (Nouvelle méthode) ---
-                // On délègue tout à la Room pour qu'elle recalcule les états
-                room.handleDisconnect(socket.id);
-                
-                // On prévient les autres que X est déconnecté (visuellement)
-                io.to(room.code).emit('updatePlayers', room.players);
-            }
-            io.emit('roomListUpdate', getPublicRooms());
-        }
-    });
-
-    socket.on('reportDeath', (posData) => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if (room) {
-            const pId = room.sockets[socket.id];
-            // On passe posData à la fonction de la room
-            room.handlePlayerDeath(pId, posData);
-        }
-    });
-
-    socket.on('playerRespawn', () => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if (room && room.state === 'RUN') {
-            const pId = room.sockets[socket.id];
-            // On remet le joueur en vie côté serveur
-            if (room.players[pId]) {
-                room.players[pId].isDead = false;
-                if (room.players[pId].originalColor) {
-                    room.players[pId].color = room.players[pId].originalColor;
-                }
-            }
-        }
-    });
-
-    socket.on('voteSkip', () => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if (room) {
-            const pId = room.sockets[socket.id];
-            room.handleSkipVote(pId); // On délègue à GameRoom
-        }
-    });
-
-    socket.on('triggerBomb', (itemId) => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if (!room || room.state !== 'RUN') return;
-
-        const itemInstance = room.mapData.find(i => i.id === itemId);
-        if (!itemInstance) return;
-
-        // On regarde si on a une logique définie pour ce TYPE d'item (ex: Type 7)
-        if (ItemLogic[itemInstance.type]) {
-            // On exécute la logique en lui passant la Room entière et l'item
-            ItemLogic[itemInstance.type](room, itemInstance);
-        }
-    });
-
-    socket.on('triggerNuke', (itemId) => {
-        const room = Object.values(rooms).find(r => r.sockets[socket.id]);
-        if (!room || room.state !== 'RUN') return;
-
-        const itemInstance = room.mapData.find(i => i.id === itemId);
-        if (!itemInstance) return;
-
-        // On appelle la logique ID 10 (définie à l'étape suivante)
-        if (ItemLogic[10]) {
-            ItemLogic[10](room, itemInstance);
-        }
-    });
-
 });
 
-
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log('>> NetParty Server v2 running'));
+server.listen(PORT, () => console.log('>> NetParty Hub Server running'));
