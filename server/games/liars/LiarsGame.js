@@ -171,11 +171,41 @@ class LiarsGame {
     }
 
     handlePlayCards(playerId, indices) {
+        // --- 1. MEMORISATION DU JOUEUR PRÉCÉDENT ---
+        // Avant d'enregistrer le nouveau coup, on note qui était le DERNIER à avoir joué.
+        // C'est lui qui devra juger si c'est la fin de la partie.
+        const previousActivePlayer = this.lastPlay ? this.lastPlay.playerId : null;
+
         const player = this.players[playerId];
-        if (!indices || indices.length === 0 || indices.length > 3) return;
-        
+
+        // --- AJOUT : RÈGLE DU DERNIER SURVIVANT (ALL-IN) ---
+        // On compte combien d'autres joueurs ont encore des cartes
+        const othersWithCards = this.playerList.filter(id => 
+            id !== playerId && 
+            !this.players[id].isDead && 
+            this.players[id].hand.length > 0
+        );
+
+        // --- LOGIQUE DE LIMITE ---
+        if (othersWithCards.length === 0) {
+            // CAS DERNIER SURVIVANT (ALL-IN)
+            // Règle : Je dois jouer EXACTEMENT toutes mes cartes (même si j'en ai 5)
+            if (indices.length !== player.hand.length) {
+                console.log(`[Liars] ${player.name} doit jouer tout son jeu (All-in requis)`);
+                return;
+            }
+            // ICI : On ne met PAS de restriction "length > 3" car c'est un All-in.
+        } else {
+            // CAS NORMAL (Il reste des adversaires)
+            // Règle : Maximum 3 cartes autorisées
+            if (indices.length > 3) {
+                console.log(`[Liars] ${player.name} tente de jouer plus de 3 cartes`);
+                return;
+            }
+        }    
+
+        // Tri et retrait des cartes
         indices.sort((a, b) => b - a); 
-        
         const playedCards = [];
         indices.forEach(idx => {
             if (player.hand[idx]) {
@@ -184,13 +214,13 @@ class LiarsGame {
             }
         });
 
-        // AJOUT : On envoie le signal d'animation MAINTENANT
-        // On le fait avant broadcastState pour que l'animation parte
+        // Animation
         this.io.to(this.code).emit('playAnimation', {
             playerId: playerId,
             count: playedCards.length
         });
 
+        // Mise à jour du stack
         this.stack.push(...playedCards);
         this.lastPlay = {
             playerId: playerId,
@@ -199,28 +229,54 @@ class LiarsGame {
             actualCards: playedCards 
         };
 
-        this.advanceTurn(true);
-        this.broadcastState();
+        // --- 2. LOGIQUE DE FIN DE MANCHE ---
+        
+        if (this.checkIfAllEmpty()) {
+            // CAS SPÉCIAL : Tout le monde est vide !
+            // Le joueur actuel (playerId) vient de finir le jeu.
+            // On doit donner la main à 'previousActivePlayer' pour qu'il décide.
+
+            if (previousActivePlayer) {
+                // On cherche l'index de ce joueur précédent dans la liste
+                const judgeIndex = this.playerList.indexOf(previousActivePlayer);
+                
+                if (judgeIndex !== -1 && !this.players[previousActivePlayer].isDead) {
+                    // On force le tour sur lui
+                    this.turnIndex = judgeIndex;
+                    
+                    this.io.to(this.code).emit('infoMessage', "Dernière chance : Menteur ou Finir ?");
+                    this.broadcastState();
+                    return; // On arrête là, on n'appelle pas advanceTurn
+                }
+            }
+            
+            // Sécurité : Si pas de joueur précédent (ex: partie à 1 seul coup ?), on redistribue direct.
+            this.io.to(this.code).emit('infoMessage', "Redistribution...");
+            setTimeout(() => this.startNewRound(), 3000);
+
+        } else {
+            // CAS NORMAL : Il reste des gens avec des cartes.
+            // On avance normalement (ce qui sautera les joueurs vides grâce à la nouvelle fonction advanceTurn)
+            this.advanceTurn(true);
+            this.broadcastState();
+        }
     }
 
-    // Ajoute cette nouvelle fonction
     handlePassTurn(playerId) {
-        // On n'autorise à passer que si on n'a plus de cartes (sinon on doit jouer)
+        // Règle de base : Si j'ai des cartes, je DOIS jouer. Je ne peux passer que si j'ai 0 carte.
         if (this.players[playerId].hand.length > 0) return;
 
-        console.log(`[Liars] ${this.players[playerId].name} passe son tour.`);
+        // Si on arrive ici, c'est que c'est le "Juge Final" qui décide de ne pas dire Menteur.
+        // Puisque tout le monde est vide (checkIfAllEmpty est vrai), la manche est terminée.
 
-        // C'est MAINTENANT qu'on vérifie si tout le monde est vide
-        // Si je passe (car j'ai 0 cartes) et que tout le monde est vide, ALORS on redistribue.
-        if (this.checkIfAllEmpty()) {
-            this.io.to(this.code).emit('infoMessage', "Tout le monde a passé. Redistribution...");
-            setTimeout(() => this.startNewRound(), 3000);
-            return;
-        }
-
-        // Sinon, au suivant
-        this.advanceTurn(true);
-        this.broadcastState();
+        console.log(`[Liars] ${this.players[playerId].name} valide la fin de la manche.`);
+        
+        this.io.to(this.code).emit('infoMessage', "Manche terminée. Redistribution...");
+        
+        // On laisse un petit délai pour lire le message
+        setTimeout(() => {
+            this.startNewRound();
+        }, 2000);
     }
 
     // Vérifie si tous les joueurs vivants ont vidé leur main
@@ -264,19 +320,9 @@ handleChallenge(challengerId) {
 
     triggerRussianRoulette(playerId) {
         const victim = this.players[playerId];
-
-        const chambersLeft = 6 - victim.bullets;
-
-    // Sécurité (ne devrait jamais arriver)
-    if (chambersLeft <= 0) {
-        victim.isDead = true;
-        this.io.to(this.code).emit('gunshot', { target: playerId, status: 'DEAD' });
-        setTimeout(() => this.startNewRound(), 4000);
-        return;
-    }
-
-    // Proba réelle de roulette russe
-    const isFatal = Math.random() < (1 / chambersLeft); 
+        
+        // 1 chance sur 6 de mourir
+        const isFatal = Math.random() < (1/6); 
 
         if (isFatal) {
             victim.isDead = true;
@@ -293,14 +339,22 @@ handleChallenge(challengerId) {
     }
 
     advanceTurn(changePlayer) {
+        // 1. On passe au suivant dans la liste
         if (changePlayer) {
             this.turnIndex = (this.turnIndex + 1) % this.playerList.length;
         }
         
         let loops = 0;
-        // On saute les morts
-        while (this.players[this.playerList[this.turnIndex]].isDead && loops < this.playerList.length) {
-            this.turnIndex = (this.turnIndex + 1) % this.playerList.length;
+        const count = this.playerList.length;
+
+        // 2. FILTRAGE STRICT : On saute les MORTS et les VIDES
+        // Si le joueur est mort OU n'a plus de cartes, on passe au suivant.
+        while (
+            (this.players[this.playerList[this.turnIndex]].isDead || 
+             this.players[this.playerList[this.turnIndex]].hand.length === 0) 
+            && loops < count
+        ) {
+            this.turnIndex = (this.turnIndex + 1) % count;
             loops++;
         }
     }
@@ -361,6 +415,5 @@ handleChallenge(challengerId) {
     
     onPlayerDisconnect(socketId) {}
 }
-
 
 module.exports = LiarsGame;

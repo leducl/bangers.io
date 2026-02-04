@@ -132,11 +132,13 @@ io.on('connection', (socket) => {
         
         room.addPlayer(socket.id, config.name, config.color);
         socket.join(code);
+        room.config.gameId = 'bangers';
         
         socket.emit('roomJoined', { 
             code, 
             isHost: true, 
-            players: room.players
+            players: room.players,
+            config: room.config
         });
         io.emit('roomListUpdate', getPublicRooms());
     });
@@ -152,7 +154,8 @@ io.on('connection', (socket) => {
         socket.emit('roomJoined', { 
             code: data.code, 
             isHost: false, 
-            players: room.players
+            players: room.players,
+            config: room.config
         });
         io.to(data.code).emit('updatePlayers', room.players);
         io.emit('roomListUpdate', getPublicRooms());

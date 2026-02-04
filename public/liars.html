@@ -523,6 +523,14 @@
             triggerThrowAnimation(data.playerId, data.count);
         });
 
+        // Ajoute cette fonction utilitaire dans ton script
+        function amILastSurvivor() {
+            // On compte les joueurs (moi inclus) qui ont des cartes > 0 et ne sont pas morts
+            const activeCount = Object.values(allPlayers).filter(p => !p.isDead && p.cardCount > 0).length;
+            // Si le total est 1 et que j'ai des cartes, c'est moi le dernier
+            return activeCount === 1 && myHand.length > 0;
+        }
+
         function triggerThrowAnimation(playerId, count) {
             // 1. On VERROUILLE tout dès que l'animation commence
             controlsLocked = true;
@@ -682,8 +690,32 @@
         }
 
         function toggleSelectCard(index, element) {
-            if (!isMyTurn || controlsLocked) return; // Bloqué si animation en cours
+            if (!isMyTurn || controlsLocked) return;
             
+            // --- LOGIQUE SPÉCIALE DERNIER SURVIVANT ---
+            if (amILastSurvivor()) {
+                // Si je suis le dernier, on bascule tout d'un coup
+                const allCards = document.querySelectorAll('#my-hand .card');
+                
+                // Si on clique, on sélectionne TOUT (si c'était pas déjà tout sélectionné)
+                // Ou on désélectionne tout (si on veut annuler pour faire "Menteur" par exemple)
+                
+                if (selectedIndices.length === myHand.length) {
+                    // Tout était sélectionné -> On vide tout
+                    selectedIndices = [];
+                    allCards.forEach(c => c.classList.remove('selected'));
+                } else {
+                    // On sélectionne TOUT
+                    selectedIndices = myHand.map((_, i) => i);
+                    allCards.forEach(c => c.classList.add('selected'));
+                }
+                
+                updateButtons();
+                return;
+            }
+            // -------------------------------------------
+
+            // --- LOGIQUE NORMALE ---
             const pos = selectedIndices.indexOf(index);
             if (pos === -1) {
                 if(selectedIndices.length < 3) {
@@ -711,13 +743,29 @@
                 return;
             }
 
-            // Sinon, logique normale
-            if (isMyTurn && selectedIndices.length > 0) {
+            // --- GESTION DU BOUTON JOUER ---
+            const lastMan = amILastSurvivor();
+            
+            // Condition : J'ai sélectionné des cartes
+            // ET (Soit c'est normal, Soit c'est le mode LastMan et j'ai TOUT sélectionné)
+            const selectionValid = selectedIndices.length > 0 && (!lastMan || selectedIndices.length === myHand.length);
+
+            if (isMyTurn && selectionValid) {
                 btnPlay.disabled = false;
                 btnPlay.style.opacity = 1;
+                
+                // Petit changement de texte pour être clair
+                if (lastMan) {
+                    btnPlay.innerText = "FINIR (POSER TOUT)";
+                    btnPlay.style.background = "#e91e63"; // Couleur plus agressive
+                } else {
+                    btnPlay.innerText = "JOUER SÉLECTION";
+                    btnPlay.style.background = "#4caf50";
+                }
             } else {
                 btnPlay.disabled = true;
                 btnPlay.style.opacity = 0.5;
+                btnPlay.innerText = lastMan ? "SÉLECTIONNEZ TOUT" : "JOUER SÉLECTION";
             }
 
             if (isMyTurn && canChallenge) {

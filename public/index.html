@@ -165,14 +165,15 @@
             if (game === 'bangers') {
                 document.getElementById('options-bangers').style.display = 'block';
                 document.getElementById('options-liars').style.display = 'none';
-                // Afficher la preview de map
                 document.getElementById('preview-panel').style.visibility = 'visible';
             } else {
                 document.getElementById('options-bangers').style.display = 'none';
                 document.getElementById('options-liars').style.display = 'block';
-                // Cacher la preview de map (pas utile pour les cartes)
                 document.getElementById('preview-panel').style.visibility = 'hidden';
             }
+
+            // IMPORTANT : On sauvegarde le changement de jeu sur le serveur immédiatement
+            if(isHost) updateSettings(); 
         }
 
         function doCreateRoom() {
@@ -190,12 +191,13 @@
             document.getElementById('lobby-code-display').innerText = `CODE: ${data.code}`;
             isHost = data.isHost;
             updateLobbyUI(data.players);
-            
+    
             if (isHost) {
                 socket.emit('requestMapList');
                 initHostItemSelector();
+                // Force l'envoi de la config par défaut si c'est une nouvelle salle
+                updateSettings(); 
             } else {
-                // Demander les infos actuelles si on n'est pas hôte
                 socket.emit('requestLobbyInfo');
             }
         });
@@ -218,6 +220,22 @@
             // 2. IMPORTANT : On met à jour les INPUTS avec la config du serveur
             // Sinon, les inputs gardent leurs valeurs par défaut (ex: 15pts) et écrasent tout
             if (currentConfig) {
+                // --- AJOUT : Restauration du jeu sélectionné ---
+                if (currentConfig.gameId) {
+                    document.getElementById('game-select').value = currentConfig.gameId;
+                    // On force l'UI à s'adapter (mais attention à updateSettings qui est dans toggleGameUI)
+                    // Ici on veut juste changer l'affichage visuel :
+                    const game = currentConfig.gameId;
+                     if (game === 'bangers') {
+                        document.getElementById('options-bangers').style.display = 'block';
+                        document.getElementById('options-liars').style.display = 'none';
+                        document.getElementById('preview-panel').style.visibility = 'visible';
+                    } else {
+                        document.getElementById('options-bangers').style.display = 'none';
+                        document.getElementById('options-liars').style.display = 'block';
+                        document.getElementById('preview-panel').style.visibility = 'hidden';
+                    }
+                }
                 if (currentConfig.maxScore) document.getElementById('score-input').value = currentConfig.maxScore;
                 if (currentConfig.runTime) document.getElementById('time-input').value = currentConfig.runTime;
                 if (currentConfig.gameMode) document.getElementById('mode-select').value = currentConfig.gameMode;
@@ -310,15 +328,23 @@
             });
         }
 
-        // 2. Envoyer les changements au serveur
+
         window.updateSettings = function() {
             if(!isHost) return;
+            
             const config = {
+                // AJOUT : On envoie quel jeu est choisi
+                gameId: document.getElementById('game-select').value, 
+                
+                // Le reste ne change pas
                 mapId: document.getElementById('map-select').value,
                 maxScore: document.getElementById('score-input').value,
                 runTime: document.getElementById('time-input').value,
                 gameMode: document.getElementById('mode-select').value,
-                allowedItems: selectedItems
+                allowedItems: selectedItems,
+                
+                // Pour Liar's Bar
+                liarsDeckSize: document.getElementById('liars-deck-size').value
             };
             socket.emit('updateLobbySettings', config);
         }
@@ -327,11 +353,29 @@
         socket.on('lobbySettingsUpdate', (data) => {
             const cfg = data.config;
             
+            const currentSelect = document.getElementById('game-select');
+            if (cfg.gameId && currentSelect.value !== cfg.gameId) {
+                currentSelect.value = cfg.gameId;
+                // On change l'UI visuelle sans renvoyer de données au serveur (pour éviter une boucle infinie)
+                const game = cfg.gameId;
+                if (game === 'bangers') {
+                    document.getElementById('options-bangers').style.display = 'block';
+                    document.getElementById('options-liars').style.display = 'none';
+                    document.getElementById('preview-panel').style.visibility = 'visible';
+                } else {
+                    document.getElementById('options-bangers').style.display = 'none';
+                    document.getElementById('options-liars').style.display = 'block';
+                    document.getElementById('preview-panel').style.visibility = 'hidden';
+                }
+            }
+
             // Mise à jour textes droite
             document.getElementById('disp-score').innerText = cfg.maxScore || 20;
             document.getElementById('disp-time').innerText = (cfg.runTime || 45) + 's';
             document.getElementById('disp-mode').innerText = (cfg.gameMode === 'perma') ? "SURVIE" : "INFINI";
             
+            if(cfg.liarsDeckSize) document.getElementById('liars-deck-size').value = cfg.liarsDeckSize;
+
             // Mise à jour liste items visuelle
             const itemCont = document.getElementById('preview-items-list');
             itemCont.innerHTML = "";
